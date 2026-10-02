@@ -37,6 +37,7 @@ function ensureImpulseStyles(): void {
     .impulse-quantities { display: flex; flex-direction: column; gap: 0.25rem; width: 100%; margin-top: 0.75rem; }
     .impulse-quantity-row { display: flex; justify-content: space-between; font-size: 1rem; }
     .impulse-quantity-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+    .impulse-outcome { font-size: 1.1rem; font-weight: 700; margin-top: 0.5rem; }
   `;
   document.head.appendChild(style);
 }
@@ -255,6 +256,10 @@ export function renderImpulseStation(mount: HTMLElement): void {
   const velocityBeforeRow = createQuantityRow(quantitiesPanel, strings.impulse.velocityBeforeLabel);
   const velocityAfterRow = createQuantityRow(quantitiesPanel, strings.impulse.velocityAfterLabel);
 
+  const outcomeLine = document.createElement('div');
+  outcomeLine.className = 'impulse-outcome';
+  modelArea.appendChild(outcomeLine);
+
   // --- Play/Reset state machine ---
   const controller: PlayResetController<ImpulseSetup> = createPlayResetController<ImpulseSetup>({
     preparedSetup: PREPARED_SETUP,
@@ -305,6 +310,8 @@ export function renderImpulseStation(mount: HTMLElement): void {
     deltaVRow.valueEl.textContent = `${formatNumber(output.quantities[2].value)} ${output.quantities[2].unit}`;
     velocityBeforeRow.valueEl.textContent = `${formatNumber(output.quantities[3].value)} ${output.quantities[3].unit}`;
     velocityAfterRow.valueEl.textContent = `${formatNumber(output.quantities[4].value)} ${output.quantities[4].unit}`;
+    const outcomeKey = output.outcome as keyof typeof strings.impulse.outcome | null;
+    outcomeLine.textContent = outcomeKey != null ? `${strings.impulse.outcomePrefix} ${strings.impulse.outcome[outcomeKey]}` : '';
   }
 
   function syncSliderInputs(setup: ImpulseSetup): void {
