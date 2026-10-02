@@ -77,6 +77,8 @@ export const strings = {
       turnsCounterclockwise: 'Turns counterclockwise: the counterclockwise moment is larger.',
     },
     keepEquilibrium: 'Keep equilibrium',
+    keepEquilibriumUnavailable:
+      'No weight can balance from this position — move one weight to the other side of the pivot first.',
     solvedVariable: {
       weightAMass: 'Weight A mass',
       weightAPosition: 'Weight A position',

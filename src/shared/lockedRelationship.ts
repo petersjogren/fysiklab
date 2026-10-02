@@ -12,6 +12,23 @@
  * `setEnabled(false)` disables both controls, mirroring the
  * `setEnabled`-style mechanism already used by the shared drag/slider
  * primitives (src/shared/interaction.ts) and Play/Reset.
+ *
+ * Ticket 05 fix-up (spec-compliance review): a setup can reach a state
+ * where NO candidate is currently solvable (e.g. Torque's two weights
+ * both on the same side of the pivot — balancing requires a weight on
+ * the opposite side, and the side-preservation rule never flips one).
+ * Checking the box, or leaving it checked, in that state must never
+ * produce a checked-but-broken equilibrium. `updateCandidateAvailability`
+ * lets the caller report, on every setup change (same cadence as its own
+ * live recompute), which candidates currently solve; this primitive then
+ * disables the corresponding <option>s and — when every candidate is
+ * unavailable — disables the checkbox itself and swaps the selector for
+ * `unavailableMessage`, so there is no way to check into (or stay
+ * checked in) a state with no solvable candidate at all. It fires no
+ * callbacks itself: the caller decides what, if anything, to do about an
+ * already-checked box whose candidates all just became unavailable (e.g.
+ * revert to the unchecked state), using the plain `setChecked`/
+ * `setSelectedId` setters below, which never invoke `onToggle`/`onSelect`.
  */
 
 export interface LockedRelationshipCandidate {
@@ -31,6 +48,19 @@ export interface LockedRelationshipOptions {
    * selector changes while checked. Never called while unchecked.
    */
   readonly onSelect: (selectedId: string) => void;
+  /**
+   * Shown in place of the selector, with the checkbox disabled, whenever
+   * `updateCandidateAvailability` reports every candidate unavailable.
+   */
+  readonly unavailableMessage: string;
+}
+
+/** Result of a `updateCandidateAvailability` call. */
+export interface CandidateAvailabilitySummary {
+  /** Whether at least one candidate is currently solvable. */
+  readonly anyAvailable: boolean;
+  /** Whether the CURRENTLY SELECTED candidate specifically is. */
+  readonly selectedAvailable: boolean;
 }
 
 export interface LockedRelationshipControl {
@@ -39,6 +69,20 @@ export interface LockedRelationshipControl {
   isChecked(): boolean;
   getSelectedId(): string;
   setEnabled(enabled: boolean): void;
+  /**
+   * Recompute, via `isAvailable`, which candidates currently solve. Marks
+   * the corresponding <option>s disabled and, when none are available,
+   * disables the checkbox and swaps the selector for `unavailableMessage`
+   * (re-enabling/restoring it once at least one candidate is available
+   * again). Call this at the same cadence as the station's own live
+   * recompute. Fires no callbacks; returns a summary so the caller can
+   * decide what to do (e.g. force an uncheck, or re-snap the selection).
+   */
+  updateCandidateAvailability(isAvailable: (candidateId: string) => boolean): CandidateAvailabilitySummary;
+  /** Sets the checked state and the selector's visibility WITHOUT firing `onToggle`. */
+  setChecked(checked: boolean): void;
+  /** Sets the selected candidate WITHOUT firing `onSelect`. */
+  setSelectedId(id: string): void;
   destroy(): void;
 }
 
@@ -59,18 +103,41 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
   const select = document.createElement('select');
   select.className = 'locked-relationship-select';
   select.hidden = true;
+  const optionsByCandidateId = new Map<string, HTMLOptionElement>();
   for (const candidate of options.candidates) {
     const option = document.createElement('option');
     option.value = candidate.id;
     option.textContent = candidate.label;
     select.appendChild(option);
+    optionsByCandidateId.set(candidate.id, option);
   }
   select.value = options.initialSelectedId;
   container.appendChild(select);
 
+  const messageEl = document.createElement('p');
+  messageEl.className = 'locked-relationship-message';
+  messageEl.textContent = options.unavailableMessage;
+  messageEl.hidden = true;
+  container.appendChild(messageEl);
+
   let selectedId = options.initialSelectedId;
+  let enabled = true;
+  let allUnavailable = false;
+
+  function applyDisabled(): void {
+    checkbox.disabled = !enabled || allUnavailable;
+    select.disabled = !enabled;
+  }
 
   function handleCheckboxChange(): void {
+    if (checkbox.disabled) {
+      // Belt-and-braces: a real browser never lets the user flip a
+      // disabled control, but guard anyway (mirrors interaction.ts's
+      // `if (!enabled) return` pattern) so a programmatic/test toggle
+      // can never check into the all-unavailable state either.
+      checkbox.checked = false;
+      return;
+    }
     const checked = checkbox.checked;
     select.hidden = !checked;
     options.onToggle(checked);
@@ -81,6 +148,14 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
 
   function handleSelectChange(): void {
     if (!checkbox.checked) {
+      return;
+    }
+    const chosenOption = optionsByCandidateId.get(select.value);
+    if (chosenOption?.disabled) {
+      // Guard against selecting a currently-unsolvable candidate (its
+      // <option> is disabled); revert the <select> to the still-selected
+      // (solvable) candidate rather than calling onSelect with it.
+      select.value = selectedId;
       return;
     }
     selectedId = select.value;
@@ -98,9 +173,39 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
     getSelectedId() {
       return selectedId;
     },
-    setEnabled(enabled: boolean) {
-      checkbox.disabled = !enabled;
-      select.disabled = !enabled;
+    setEnabled(next: boolean) {
+      enabled = next;
+      applyDisabled();
+    },
+    updateCandidateAvailability(isAvailable) {
+      let anyAvailable = false;
+      let selectedAvailable = false;
+      for (const candidate of options.candidates) {
+        const available = isAvailable(candidate.id);
+        const option = optionsByCandidateId.get(candidate.id);
+        if (option) {
+          option.disabled = !available;
+        }
+        if (available) {
+          anyAvailable = true;
+          if (candidate.id === selectedId) {
+            selectedAvailable = true;
+          }
+        }
+      }
+      allUnavailable = !anyAvailable;
+      applyDisabled();
+      messageEl.hidden = !allUnavailable;
+      select.hidden = allUnavailable ? true : !checkbox.checked;
+      return { anyAvailable, selectedAvailable };
+    },
+    setChecked(checked: boolean) {
+      checkbox.checked = checked;
+      select.hidden = allUnavailable ? true : !checked;
+    },
+    setSelectedId(id: string) {
+      selectedId = id;
+      select.value = id;
     },
     destroy() {
       checkbox.removeEventListener('change', handleCheckboxChange);

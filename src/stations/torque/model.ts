@@ -38,6 +38,15 @@ import type {
 
 export const GRAVITY_M_PER_S2 = 9.82;
 
+/**
+ * The mass slider's real range (page.ts's sliders; ticket 05 fix-up,
+ * solve.ts): a solved mass outside this is not actually reachable by the
+ * student, so solve.ts bounds its computed mass against these the same
+ * way it already bounds a computed position to [0, beamLengthM].
+ */
+export const MASS_MIN_KG = 0.1;
+export const MASS_MAX_KG = 10;
+
 export interface TorqueWeight {
   readonly massKg: number;
   /** Position along the beam, 0 at the left end, beamLengthM at the right end. */

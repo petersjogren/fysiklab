@@ -19,7 +19,7 @@
  * exists on that side within [0, beamLengthM].
  */
 
-import { GRAVITY_M_PER_S2, type TorqueSetup, type TorqueWeight } from './model';
+import { GRAVITY_M_PER_S2, MASS_MIN_KG, MASS_MAX_KG, type TorqueSetup, type TorqueWeight } from './model';
 
 export type TorqueSolvedField = 'weightA.massKg' | 'weightA.positionM' | 'weightB.massKg' | 'weightB.positionM';
 
@@ -79,6 +79,12 @@ function solveMass(setup: TorqueSetup, solvedWeight: TorqueWeight, other: Torque
   }
 
   const value = otherMoment / (GRAVITY_M_PER_S2 * arm);
+  if (value < MASS_MIN_KG || value > MASS_MAX_KG) {
+    // Mirrors solvePosition's [0, beamLengthM] bound check: a mass outside
+    // the slider's real range is not actually achievable, so this is
+    // unsolvable rather than silently returning an out-of-range value.
+    return { ok: false, reason: 'unsolvable' };
+  }
   return { ok: true, value };
 }
 

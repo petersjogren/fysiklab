@@ -6,12 +6,18 @@ import { createLockedRelationshipControl } from '../src/shared/lockedRelationshi
  * (src/shared/lockedRelationship.ts), generic over an arbitrary candidate
  * list (ticket 05; ticket 06/Archimedes reuses this verbatim). Kept at the
  * same smoke-but-real level as tests/interaction.test.ts.
+ *
+ * Ticket 05 fix-up (spec-compliance review): also covers
+ * `updateCandidateAvailability` — per-candidate disabling and the
+ * all-unavailable "cannot be checked" state.
  */
 
 const CANDIDATES = [
   { id: 'a', label: 'Candidate A' },
   { id: 'b', label: 'Candidate B' },
 ];
+
+const UNAVAILABLE_MESSAGE = 'No candidate can currently balance this setup.';
 
 describe('createLockedRelationshipControl', () => {
   it('renders an unchecked checkbox and a hidden selector with the given candidates', () => {
@@ -21,6 +27,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'a',
       onToggle: vi.fn(),
       onSelect: vi.fn(),
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -42,6 +49,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'b',
       onToggle,
       onSelect,
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -63,6 +71,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'a',
       onToggle,
       onSelect: vi.fn(),
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -85,6 +94,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'a',
       onToggle: vi.fn(),
       onSelect,
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -108,6 +118,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'a',
       onToggle: vi.fn(),
       onSelect,
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     const select = control.element.querySelector('select') as HTMLSelectElement;
@@ -124,6 +135,7 @@ describe('createLockedRelationshipControl', () => {
       initialSelectedId: 'a',
       onToggle: vi.fn(),
       onSelect: vi.fn(),
+      unavailableMessage: UNAVAILABLE_MESSAGE,
     });
 
     control.setEnabled(false);
@@ -136,5 +148,177 @@ describe('createLockedRelationshipControl', () => {
     control.setEnabled(true);
     expect(checkbox.disabled).toBe(false);
     expect(select.disabled).toBe(false);
+  });
+
+  describe('updateCandidateAvailability', () => {
+    it('disables the <option> for a candidate reported unavailable, leaving others enabled', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      const summary = control.updateCandidateAvailability((id) => id === 'a');
+
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      const options = Array.from(select.options) as HTMLOptionElement[];
+      expect(options.find((o) => o.value === 'a')!.disabled).toBe(false);
+      expect(options.find((o) => o.value === 'b')!.disabled).toBe(true);
+      expect(summary).toEqual({ anyAvailable: true, selectedAvailable: true });
+    });
+
+    it('reports selectedAvailable: false when the currently-selected candidate is the unavailable one', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'b',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      const summary = control.updateCandidateAvailability((id) => id === 'a');
+
+      expect(summary).toEqual({ anyAvailable: true, selectedAvailable: false });
+    });
+
+    it('rejects selecting a disabled candidate: the <select> reverts and onSelect is not called', () => {
+      const onSelect = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect,
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+      onSelect.mockClear();
+
+      control.updateCandidateAvailability((id) => id === 'a'); // 'b' now disabled
+
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      select.value = 'b';
+      select.dispatchEvent(new Event('change'));
+
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(select.value).toBe('a');
+      expect(control.getSelectedId()).toBe('a');
+    });
+
+    it('when every candidate is unavailable, disables the checkbox and shows the message instead of the selector', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      const summary = control.updateCandidateAvailability(() => false);
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      const message = control.element.querySelector('.locked-relationship-message') as HTMLParagraphElement;
+
+      expect(summary).toEqual({ anyAvailable: false, selectedAvailable: false });
+      expect(checkbox.disabled).toBe(true);
+      expect(select.hidden).toBe(true);
+      expect(message.hidden).toBe(false);
+      expect(message.textContent).toBe(UNAVAILABLE_MESSAGE);
+    });
+
+    it('cannot be checked while every candidate is unavailable (programmatic checked=true is reverted)', () => {
+      const onToggle = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle,
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.updateCandidateAvailability(() => false);
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+
+      expect(onToggle).not.toHaveBeenCalled();
+      expect(checkbox.checked).toBe(false);
+      expect(control.isChecked()).toBe(false);
+    });
+
+    it('re-enables the checkbox and hides the message again once a candidate becomes available', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.updateCandidateAvailability(() => false);
+      control.updateCandidateAvailability((id) => id === 'a');
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const message = control.element.querySelector('.locked-relationship-message') as HTMLParagraphElement;
+      expect(checkbox.disabled).toBe(false);
+      expect(message.hidden).toBe(true);
+    });
+  });
+
+  describe('setChecked / setSelectedId (programmatic, non-firing)', () => {
+    it('setChecked(false) updates state and selector visibility without calling onToggle', () => {
+      const onToggle = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle,
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+      onToggle.mockClear();
+
+      control.setChecked(false);
+
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      expect(checkbox.checked).toBe(false);
+      expect(select.hidden).toBe(true);
+      expect(onToggle).not.toHaveBeenCalled();
+    });
+
+    it('setSelectedId updates getSelectedId and the <select> value without calling onSelect', () => {
+      const onSelect = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect,
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.setSelectedId('b');
+
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      expect(control.getSelectedId()).toBe('b');
+      expect(select.value).toBe('b');
+      expect(onSelect).not.toHaveBeenCalled();
+    });
   });
 });

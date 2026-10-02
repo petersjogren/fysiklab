@@ -204,6 +204,51 @@ describe('solve — weightB.positionM (side-preservation rule)', () => {
   });
 });
 
+describe('solve — mass bound check (ticket 05 fix-up)', () => {
+  it('is unsolvable when the required mass would fall below the slider\'s MASS_MIN_KG', () => {
+    const setup = setupWith({
+      pivotPositionM: 1,
+      weightA: { massKg: 1, positionM: 0.5 }, // arm 0.5, ccw
+      weightB: { massKg: 1, positionM: 1.01 }, // arm 0.01, cw, moment = 1*G*0.01
+    });
+    // requiredMassA = (1*0.01) / 0.5 = 0.02, below MASS_MIN_KG (0.1)
+
+    const result = solve(setup, 'weightA.massKg');
+
+    expect(result).toEqual({ ok: false, reason: 'unsolvable' });
+  });
+
+  it('is unsolvable when the required mass would exceed the slider\'s MASS_MAX_KG', () => {
+    const setup = setupWith({
+      pivotPositionM: 1,
+      weightA: { massKg: 1, positionM: 0.99 }, // arm 0.01, ccw: tiny arm needs huge mass
+      weightB: { massKg: 1, positionM: 1.6 }, // arm 0.6, cw, moment = 1*G*0.6
+    });
+    // requiredMassA = (1*0.6) / 0.01 = 60, above MASS_MAX_KG (10)
+
+    const result = solve(setup, 'weightA.massKg');
+
+    expect(result).toEqual({ ok: false, reason: 'unsolvable' });
+  });
+
+  it('solves normally when the required mass is within [MASS_MIN_KG, MASS_MAX_KG]', () => {
+    const setup = setupWith({
+      pivotPositionM: 1,
+      weightA: { massKg: 1, positionM: 0.4 }, // arm 0.6, ccw
+      weightB: { massKg: 2, positionM: 1.6 }, // arm 0.6, cw, moment = 2*G*0.6
+    });
+
+    const result = solve(setup, 'weightA.massKg');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toBeCloseTo(2);
+      expect(result.value).toBeGreaterThanOrEqual(0.1);
+      expect(result.value).toBeLessThanOrEqual(10);
+    }
+  });
+});
+
 describe('solve — edge cases', () => {
   it('a weight at the pivot (zero arm) for a mass-solve is only solvable if the other moment is zero too', () => {
     const setup = setupWith({

@@ -14,11 +14,9 @@ import { createPlayResetController } from '../../shared/playReset';
 import { createDraggable, createSliderControl } from '../../shared/interaction';
 import { createLockedRelationshipControl } from '../../shared/lockedRelationship';
 import { strings } from '../../shared/strings';
-import { torqueStationModel, defaultTorqueSetup, type TorqueSetup } from './model';
+import { torqueStationModel, defaultTorqueSetup, MASS_MIN_KG, MASS_MAX_KG, type TorqueSetup } from './model';
 import { solve, type TorqueSolvedField } from './solve';
 
-const MASS_MIN_KG = 0.1;
-const MASS_MAX_KG = 10;
 const MASS_STEP_KG = 0.1;
 
 const SVG_WIDTH = 300;
@@ -270,6 +268,38 @@ export function renderTorqueStation(mount: HTMLElement): void {
 
   function render(): void {
     const setup = getSetup();
+
+    // Recompute, every time the setup changes (same cadence as the rest
+    // of this live recompute), which of the 4 Solved-variable candidates
+    // currently solve (ticket 05 fix-up): disables the corresponding
+    // <option>s, and — if none solve at all (e.g. both weights now on
+    // the same side of the pivot) — disables the checkbox and shows the
+    // explanatory message instead of the selector.
+    const availability = lockedControl.updateCandidateAvailability((id) =>
+      solve(setup, id as TorqueSolvedField).ok
+    );
+
+    if (lockedChecked && !availability.anyAvailable) {
+      // Keep equilibrium was checked, but a drag (of the pivot or a
+      // non-Solved field) has just carried the setup into a state where
+      // NO candidate can balance it any longer. Staying checked here
+      // would mean "checked but broken" (ADR-0006's core invariant), and
+      // every further drag would freeze solid (applyDrivingChange would
+      // keep treating this already-invalid setup as its baseline). Revert
+      // to the same unchecked-equivalent state the "never checkable"
+      // case above uses: plain free values, Play/Reset back, checkbox
+      // unchecked (and, since availability is still all-false, disabled
+      // again with the message shown by the recursive render() below).
+      lockedChecked = false;
+      controller.setSetup(setup);
+      lockedControl.setChecked(false);
+      handles.playButton.style.display = '';
+      handles.resetButton.style.display = '';
+      syncInteractionEnabled();
+      render();
+      return;
+    }
+
     const output = torqueStationModel.model(setup);
 
     beamLine.setAttribute('x1', String(toPx(0, setup.beamLengthM)));
@@ -443,6 +473,7 @@ export function renderTorqueStation(mount: HTMLElement): void {
     checkboxLabel: strings.torque.keepEquilibrium,
     candidates: SOLVED_VARIABLE_CANDIDATES,
     initialSelectedId: solvedField,
+    unavailableMessage: strings.torque.keepEquilibriumUnavailable,
     onToggle: (checked) => {
       lockedChecked = checked;
       if (checked) {
