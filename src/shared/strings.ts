@@ -18,6 +18,7 @@ export const strings = {
       impulse: 'Impulse',
       torque: 'Torque',
       archimedes: 'Archimedes',
+      boat: 'Boat',
     },
   },
   station: {
@@ -88,14 +89,14 @@ export const strings = {
   },
   archimedes: {
     title: 'Archimedes',
-    ruleText: 'Buoyancy is the weight of the liquid displaced.',
-    formula: 'F_b = \u03c1 V_displaced g',
+    ruleText: 'Buoyancy is the weight of the liquid displaced. A hanging scale reads less as the block goes under.',
+    formula: 'F_b = \\u03c1 V_displaced g',
     chain:
-      'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside.',
+      'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside — the scale reads the difference.',
     heldFixedLine: 'Held fixed: the liquid is still and the block does not change shape.',
     weightLabel: 'Weight',
-    buoyantForceLabel: 'Buoyant force',
-    displacedVolumeLabel: 'Displaced volume',
+    apparentWeightLabel: 'Apparent weight (scale)',
+    displacedLiquidLabel: 'Displaced liquid',
     blockMassLabel: 'Block mass',
     blockVolumeLabel: 'Block volume',
     liquidDensityLabel: 'Liquid density',
@@ -113,6 +114,34 @@ export const strings = {
       blockVolume: 'Block volume',
       liquidDensity: 'Liquid density',
       blockVerticalPosition: 'Block vertical position',
+    },
+  },
+  boat: {
+    title: 'Boat',
+    ruleText: 'A floating hull settles until it displaces exactly its own weight of liquid.',
+    formula: 'F_b = \\u03c1 V_displaced g',
+    chain:
+      'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside. A heavier load sits lower, displacing more, until the forces match — or the hull sinks.',
+    heldFixedLine: "Held fixed: the liquid is still and the hull does not change shape.",
+    weightLabel: 'Weight',
+    displacedVolumeLabel: 'Displaced volume',
+    blockMassLabel: 'Hull mass',
+    blockVolumeLabel: 'Hull volume',
+    liquidDensityLabel: 'Liquid density',
+    outcome: {
+      floats: 'Floats',
+      sinks: 'Sinks',
+      hangs: 'Hangs',
+    },
+    outcomePrefix: 'Outcome:',
+    keepAfloat: 'Keep afloat',
+    keepAfloatUnavailable:
+      'No value can keep the hull afloat here — move the hull, or change its volume or the liquid density, first.',
+    solvedVariable: {
+      blockMass: 'Hull mass',
+      blockVolume: 'Hull volume',
+      liquidDensity: 'Liquid density',
+      blockVerticalPosition: 'Hull vertical position',
     },
   },
 } as const;
