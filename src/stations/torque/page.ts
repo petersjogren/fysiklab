@@ -300,6 +300,34 @@ export function renderTorqueStation(mount: HTMLElement): void {
       return;
     }
 
+    if (lockedChecked && availability.anyAvailable && !availability.selectedAvailable) {
+      // Ticket 05 fix-up round 2: a drag just made the CURRENTLY SELECTED
+      // Solved-variable candidate specifically unsolvable (e.g. dragging
+      // weight A near/onto the pivot breaks weightA.massKg /
+      // weightA.positionM) while OTHER candidates (e.g. weightB's) remain
+      // solvable. Leaving the checkbox checked against this now-broken
+      // candidate would violate ADR-0006's invariant exactly like the
+      // all-unavailable case above, and every further drag would freeze
+      // (applyDrivingChange keeps solving against the stale, now-invalid
+      // solvedField). Rather than kicking the student out of
+      // Locked-relationship mode for what may be a transient drag,
+      // auto-switch to the first still-available candidate and re-snap —
+      // the same thing switching the selector by hand already does via
+      // onSelect.
+      const firstAvailable = SOLVED_VARIABLE_CANDIDATES.find((candidate) => solve(setup, candidate.id).ok);
+      if (firstAvailable) {
+        solvedField = firstAvailable.id;
+        lockedControl.setSelectedId(solvedField);
+        const result = solve(setup, solvedField);
+        if (result.ok) {
+          setSetup(withField(setup, solvedField, result.value));
+        }
+        syncInteractionEnabled();
+        render();
+        return;
+      }
+    }
+
     const output = torqueStationModel.model(setup);
 
     beamLine.setAttribute('x1', String(toPx(0, setup.beamLengthM)));

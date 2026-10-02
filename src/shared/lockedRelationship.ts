@@ -139,6 +139,30 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
       return;
     }
     const checked = checkbox.checked;
+    if (checked) {
+      const chosenOption = optionsByCandidateId.get(selectedId);
+      if (chosenOption?.disabled) {
+        // Ticket 05 fix-up round 2: the currently-selected candidate
+        // itself has just become unsolvable (e.g. dragging a weight onto
+        // the pivot) while at least one OTHER candidate still solves —
+        // updateCandidateAvailability's allUnavailable is false, so the
+        // checkbox stayed enabled and this handler was allowed to run.
+        // Mirror handleSelectChange's guard below: never call onSelect
+        // with an unsolvable candidate. Unlike a selector switch there is
+        // no previously-checked value to revert to (we're checking in
+        // right now), so auto-switch to the first still-available
+        // candidate instead of refusing the check outright — this keeps
+        // the invariant (never checked-but-broken) while still letting
+        // the student enter Locked-relationship mode.
+        const firstAvailable = options.candidates.find(
+          (candidate) => !optionsByCandidateId.get(candidate.id)?.disabled
+        );
+        if (firstAvailable) {
+          selectedId = firstAvailable.id;
+          select.value = selectedId;
+        }
+      }
+    }
     select.hidden = !checked;
     options.onToggle(checked);
     if (checked) {

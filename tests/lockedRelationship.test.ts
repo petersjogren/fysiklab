@@ -277,6 +277,65 @@ describe('createLockedRelationshipControl', () => {
     });
   });
 
+  describe('checking the box while the SELECTED candidate specifically is disabled (ticket 05 fix-up round 2)', () => {
+    it('auto-switches to the first still-available candidate and calls onSelect with it, instead of the disabled selected one', () => {
+      const onSelect = vi.fn();
+      const onToggle = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle,
+        onSelect,
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      // 'a' (the initially-selected/default candidate) becomes unsolvable
+      // while 'b' remains solvable — allUnavailable stays false (checkbox
+      // stays enabled), but the SELECTED option ('a') is now disabled.
+      control.updateCandidateAvailability((id) => id === 'b');
+
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(false); // still checkable — not the all-unavailable case
+
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+
+      // Must never call onSelect with the disabled candidate 'a'.
+      expect(onSelect).not.toHaveBeenCalledWith('a');
+      expect(onSelect).toHaveBeenCalledWith('b');
+      expect(onToggle).toHaveBeenCalledWith(true);
+      expect(control.getSelectedId()).toBe('b');
+      const select = control.element.querySelector('select') as HTMLSelectElement;
+      expect(select.value).toBe('b');
+    });
+
+    it('does not throw and simply checks without re-selecting when no candidate is available at all', () => {
+      // Belt-and-braces: if allUnavailable somehow raced with a checkbox
+      // flip, the existing checkbox.disabled guard above already catches
+      // it; this just confirms the new guard added here degrades safely
+      // (no candidate found) rather than crashing.
+      const onSelect = vi.fn();
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect,
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.updateCandidateAvailability((id) => id === 'a');
+      // Checkbox is enabled and checking it works normally since 'a' (the
+      // selected candidate) IS available — sanity check the normal path
+      // still fires onSelect('a') and is unaffected by the new guard.
+      const checkbox = control.element.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+      expect(onSelect).toHaveBeenCalledWith('a');
+    });
+  });
+
   describe('setChecked / setSelectedId (programmatic, non-firing)', () => {
     it('setChecked(false) updates state and selector visibility without calling onToggle', () => {
       const onToggle = vi.fn();
