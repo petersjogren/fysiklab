@@ -6,6 +6,20 @@
  * archimedesStation.model()/.play() (and, for "Keep hangs" mode,
  * solve.ts) output and renders it.
  *
+ * ADR-0007: the visual is a hanging scale over a graduated beaker with an
+ * overflow spout and catch bowl — the classic lab demo — replacing the
+ * earlier tank cross-section. The scale reads apparent weight in
+ * kilograms, clamped at zero once buoyant force would exceed weight (a
+ * hanging scale's string goes slack, it does not read negative); the
+ * catch bowl reports displaced liquid in liters with its kilogram
+ * equivalent. model.ts/solve.ts are untouched — this is a display-layer
+ * change only, using the toKg/apparentWeightKg/toLiters helpers they
+ * export. The explicit weight-down/buoyancy-up force arrows the old view
+ * drew are dropped in favor of the scale+bowl numbers (which carry the
+ * same comparison more directly in this metaphor); a single buoyant-force
+ * arrow remains on the submerged block, echoing the one "Lyftkraft" arrow
+ * in the reference picture.
+ *
  * "Keep hangs" Locked relationship (ticket 06, ADR-0006): mirrors the
  * Torque station's "Keep equilibrium" wiring (src/stations/torque/page.ts)
  * as closely as the two stations' shapes allow — same checkbox+selector
@@ -25,6 +39,10 @@ import {
   archimedesStation,
   computeGeometry,
   preparedArchimedesSetup,
+  apparentWeightKg,
+  toKg,
+  toLiters,
+  GRAVITY,
   MIN_BLOCK_MASS,
   MIN_BLOCK_VOLUME,
   MAX_BLOCK_MASS,
@@ -53,6 +71,7 @@ function ensureArchimedesStyles(): void {
     .archimedes-model-area { flex-direction: column; align-items: stretch; }
     .archimedes-visual { width: 100%; height: auto; touch-action: none; }
     .archimedes-block { cursor: grab; }
+    .archimedes-scale-reading { font-weight: 700; font-variant-numeric: tabular-nums; }
     .archimedes-sliders { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; margin-top: 0.5rem; }
     .archimedes-slider-row { display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; }
     .archimedes-slider-label { flex: 0 0 7rem; }
@@ -138,15 +157,20 @@ function createSliderRow(
   return { input, valueEl };
 }
 
-// Model-space -> pixel mapping for the tank SVG. Model-space has the
+// Model-space -> pixel mapping for the beaker SVG (ADR-0007: scale +
+// beaker + catch bowl, not a bare tank). Model-space still has the
 // liquid surface at y = 0, +y up, tank bottom at y = -1 (src/stations/
-// archimedes/model.ts TANK_DEPTH); the SVG has y growing downward.
+// archimedes/model.ts TANK_DEPTH); the SVG has y growing downward. The
+// scale box occupies the top of the viewBox; the beaker sits below it,
+// shorter than before to make room.
 const VIEW_WIDTH = 300;
-const VIEW_HEIGHT = 220;
-const SURFACE_Y_PX = 40;
-const TANK_BOTTOM_Y_PX = 200;
+const VIEW_HEIGHT = 270;
+const SCALE_TOP_PX = 8;
+const SCALE_BOTTOM_PX = 46;
+const SURFACE_Y_PX = 90;
+const TANK_BOTTOM_Y_PX = 240;
 const PX_PER_MODEL_M = TANK_BOTTOM_Y_PX - SURFACE_Y_PX; // tank depth (1 m) maps to this many px
-const ABOVE_SURFACE_PX_PER_M = 80; // scale for the draggable range above the surface
+const ABOVE_SURFACE_PX_PER_M = 60; // scale for the draggable range above the surface (visible string slack)
 
 function modelYToPixelY(modelY: number): number {
   return modelY >= 0 ? SURFACE_Y_PX - modelY * ABOVE_SURFACE_PX_PER_M : SURFACE_Y_PX - modelY * PX_PER_MODEL_M;
@@ -231,19 +255,69 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   modelArea.innerHTML = '';
   modelArea.classList.add('archimedes-model-area');
 
-  // --- Visual: tank, liquid surface, block, weight/buoyancy arrows ---
+  // --- Visual: scale, string, beaker with overflow spout, catch bowl ---
+  // (ADR-0007: the classic lab demo, replacing the earlier tank cross-section.)
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', `0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`);
   svg.setAttribute('class', 'archimedes-visual');
   modelArea.appendChild(svg);
 
-  const tankLeft = 60;
-  const tankRight = 240;
+  const tankLeft = 55;
+  const tankRight = 195;
+  const tankCenterX = (tankLeft + tankRight) / 2;
+  const spoutRight = 220;
+  const bowlLeft = 225;
+  const bowlRight = 270;
+  const bowlTop = TANK_BOTTOM_Y_PX - 34;
+  const bowlBottom = TANK_BOTTOM_Y_PX;
 
+  // Scale body: a box with "KILO" and a live kilogram readout.
+  const scaleBody = document.createElementNS(SVG_NS, 'rect');
+  scaleBody.setAttribute('x', String(tankCenterX - 34));
+  scaleBody.setAttribute('y', String(SCALE_TOP_PX));
+  scaleBody.setAttribute('width', '68');
+  scaleBody.setAttribute('height', String(SCALE_BOTTOM_PX - SCALE_TOP_PX));
+  scaleBody.setAttribute('rx', '4');
+  scaleBody.setAttribute('fill', '#ffffff');
+  scaleBody.setAttribute('stroke', '#111111');
+  scaleBody.setAttribute('stroke-width', '2');
+  svg.appendChild(scaleBody);
+
+  const scaleKiloText = document.createElementNS(SVG_NS, 'text');
+  scaleKiloText.setAttribute('x', String(tankCenterX));
+  scaleKiloText.setAttribute('y', String(SCALE_TOP_PX + 12));
+  scaleKiloText.setAttribute('text-anchor', 'middle');
+  scaleKiloText.setAttribute('font-size', '8');
+  scaleKiloText.setAttribute('fill', '#666666');
+  scaleKiloText.textContent = 'KILO';
+  svg.appendChild(scaleKiloText);
+
+  const scaleReadingText = document.createElementNS(SVG_NS, 'text');
+  scaleReadingText.setAttribute('class', 'archimedes-scale-reading');
+  scaleReadingText.setAttribute('x', String(tankCenterX));
+  scaleReadingText.setAttribute('y', String(SCALE_TOP_PX + 30));
+  scaleReadingText.setAttribute('text-anchor', 'middle');
+  scaleReadingText.setAttribute('font-size', '14');
+  scaleReadingText.setAttribute('fill', '#111111');
+  svg.appendChild(scaleReadingText);
+
+  // String from the scale down to the block (goes visually slack at the
+  // ADR-0007 zero clamp — drawn to the block regardless, since the block
+  // keeps moving even once the scale reads zero).
+  const stringLine = document.createElementNS(SVG_NS, 'line');
+  stringLine.setAttribute('x1', String(tankCenterX));
+  stringLine.setAttribute('y1', String(SCALE_BOTTOM_PX));
+  stringLine.setAttribute('x2', String(tankCenterX));
+  stringLine.setAttribute('stroke', '#111111');
+  stringLine.setAttribute('stroke-width', '1.5');
+  svg.appendChild(stringLine);
+
+  // Beaker with an overflow spout on the right (spec: force arrows red,
+  // displaced liquid blue — the catch-bowl fill below carries that blue).
   const tankOutline = document.createElementNS(SVG_NS, 'path');
   tankOutline.setAttribute(
     'd',
-    `M${tankLeft},${SURFACE_Y_PX - 10} L${tankLeft},${TANK_BOTTOM_Y_PX} L${tankRight},${TANK_BOTTOM_Y_PX} L${tankRight},${SURFACE_Y_PX - 10}`
+    `M${tankLeft},${SURFACE_Y_PX - 10} L${tankLeft},${TANK_BOTTOM_Y_PX} L${tankRight},${TANK_BOTTOM_Y_PX} L${tankRight},${SURFACE_Y_PX + 8} L${spoutRight},${SURFACE_Y_PX - 2}`
   );
   tankOutline.setAttribute('fill', 'none');
   tankOutline.setAttribute('stroke', '#111111');
@@ -258,11 +332,6 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   liquidSurface.setAttribute('fill', '#cfe3f7');
   svg.appendChild(liquidSurface);
 
-  const displacedRegion = document.createElementNS(SVG_NS, 'rect');
-  displacedRegion.setAttribute('class', 'archimedes-displaced blue-quantity');
-  displacedRegion.setAttribute('fill-opacity', '0.45');
-  svg.appendChild(displacedRegion);
-
   const block = document.createElementNS(SVG_NS, 'rect');
   block.setAttribute('class', 'archimedes-block');
   block.setAttribute('fill', '#ffffff');
@@ -271,12 +340,36 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   block.setAttribute('stroke-width', '2');
   svg.appendChild(block);
 
-  const weightArrow = document.createElementNS(SVG_NS, 'line');
-  weightArrow.setAttribute('class', 'archimedes-weight-arrow force-vector');
-  weightArrow.setAttribute('stroke-width', '3');
-  weightArrow.setAttribute('marker-end', 'url(#archimedes-arrowhead-down)');
-  svg.appendChild(weightArrow);
+  // Catch bowl beside the beaker, filled proportionally to the displaced
+  // liquid (liters), with a "X L = Y kg" readout (ADR-0007).
+  const bowlOutline = document.createElementNS(SVG_NS, 'path');
+  bowlOutline.setAttribute(
+    'd',
+    `M${bowlLeft},${bowlTop} L${bowlLeft},${bowlBottom} L${bowlRight},${bowlBottom} L${bowlRight},${bowlTop}`
+  );
+  bowlOutline.setAttribute('fill', 'none');
+  bowlOutline.setAttribute('stroke', '#111111');
+  bowlOutline.setAttribute('stroke-width', '2');
+  svg.appendChild(bowlOutline);
 
+  const bowlFill = document.createElementNS(SVG_NS, 'rect');
+  bowlFill.setAttribute('class', 'archimedes-displaced blue-quantity');
+  bowlFill.setAttribute('x', String(bowlLeft));
+  bowlFill.setAttribute('width', String(bowlRight - bowlLeft));
+  bowlFill.setAttribute('fill-opacity', '0.55');
+  svg.appendChild(bowlFill);
+
+  const bowlReadingText = document.createElementNS(SVG_NS, 'text');
+  bowlReadingText.setAttribute('x', String((bowlLeft + bowlRight) / 2));
+  bowlReadingText.setAttribute('y', String(bowlTop - 8));
+  bowlReadingText.setAttribute('text-anchor', 'middle');
+  bowlReadingText.setAttribute('font-size', '9');
+  bowlReadingText.setAttribute('fill', '#111111');
+  svg.appendChild(bowlReadingText);
+
+  // A single buoyant-force arrow on the submerged block (echoes the
+  // reference picture's one "Lyftkraft" arrow); weight is read off the
+  // scale instead of a second drawn arrow (ADR-0007).
   const buoyantArrow = document.createElementNS(SVG_NS, 'line');
   buoyantArrow.setAttribute('class', 'archimedes-buoyant-arrow force-vector');
   buoyantArrow.setAttribute('stroke-width', '3');
@@ -284,19 +377,6 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   svg.appendChild(buoyantArrow);
 
   const defs = document.createElementNS(SVG_NS, 'defs');
-  const downMarker = document.createElementNS(SVG_NS, 'marker');
-  downMarker.setAttribute('id', 'archimedes-arrowhead-down');
-  downMarker.setAttribute('markerWidth', '8');
-  downMarker.setAttribute('markerHeight', '8');
-  downMarker.setAttribute('refX', '4');
-  downMarker.setAttribute('refY', '4');
-  downMarker.setAttribute('orient', 'auto-start-reverse');
-  const downPath = document.createElementNS(SVG_NS, 'path');
-  downPath.setAttribute('d', 'M0,0 L8,4 L0,8 Z');
-  downPath.setAttribute('class', 'force-vector');
-  downMarker.appendChild(downPath);
-  defs.appendChild(downMarker);
-
   const upMarker = document.createElementNS(SVG_NS, 'marker');
   upMarker.setAttribute('id', 'archimedes-arrowhead-up');
   upMarker.setAttribute('markerWidth', '8');
@@ -348,8 +428,8 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   modelArea.appendChild(quantitiesPanel);
 
   const weightRow = createQuantityRow(quantitiesPanel, strings.archimedes.weightLabel);
-  const buoyantRow = createQuantityRow(quantitiesPanel, strings.archimedes.buoyantForceLabel);
-  const displacedRow = createQuantityRow(quantitiesPanel, strings.archimedes.displacedVolumeLabel);
+  const apparentWeightRow = createQuantityRow(quantitiesPanel, strings.archimedes.apparentWeightLabel);
+  const displacedRow = createQuantityRow(quantitiesPanel, strings.archimedes.displacedLiquidLabel);
 
   // --- Play/Reset state machine ---
   const controller: PlayResetController<ArchimedesSetup> = createPlayResetController<ArchimedesSetup>({
@@ -394,42 +474,49 @@ export function renderArchimedesStation(mount: HTMLElement): void {
       (setup.blockVerticalPosition >= 0 ? ABOVE_SURFACE_PX_PER_M : PX_PER_MODEL_M) *
       (geometry.blockHeight / 2);
     const centerYPx = modelYToPixelY(setup.blockVerticalPosition);
-    const blockWidthPx = 60;
-    const blockLeftPx = (tankLeft + tankRight) / 2 - blockWidthPx / 2;
+    const blockWidthPx = 50;
+    const blockLeftPx = tankCenterX - blockWidthPx / 2;
+    const blockTopPx = centerYPx - halfHeightPx;
 
     block.setAttribute('x', String(blockLeftPx));
-    block.setAttribute('y', String(centerYPx - halfHeightPx));
+    block.setAttribute('y', String(blockTopPx));
     block.setAttribute('width', String(blockWidthPx));
     block.setAttribute('height', String(Math.max(2, halfHeightPx * 2)));
 
-    const displaced = output.quantities.find((q) => q.key === 'archimedes.displacedVolume');
-    const displacedVolume = displaced?.value ?? 0;
-    const submergedFraction = geometry.blockHeight > 0 ? displacedVolume / (geometry.crossSectionArea * geometry.blockHeight) : 0;
-    const submergedHeightPx = Math.max(2, halfHeightPx * 2 * submergedFraction);
-    displacedRegion.setAttribute('x', String(blockLeftPx));
-    displacedRegion.setAttribute('y', String(SURFACE_Y_PX));
-    displacedRegion.setAttribute('width', String(blockWidthPx));
-    displacedRegion.setAttribute('height', displacedVolume > 0 ? String(submergedHeightPx) : '0');
+    // String from the scale down to the top of the block — stays drawn
+    // even once the scale reading clamps at zero (ADR-0007: the string
+    // goes slack, it does not disappear).
+    stringLine.setAttribute('y2', String(blockTopPx));
 
     const weight = output.quantities.find((q) => q.key === 'archimedes.weight')?.value ?? 0;
     const buoyant = output.quantities.find((q) => q.key === 'archimedes.buoyantForce')?.value ?? 0;
-    const maxArrowLen = 60;
-    const arrowScale = maxArrowLen / (MASS_MAX * 9.82);
-    const blockCenterX = (tankLeft + tankRight) / 2;
+    const displaced = output.quantities.find((q) => q.key === 'archimedes.displacedVolume');
+    const displacedVolume = displaced?.value ?? 0;
 
-    weightArrow.setAttribute('x1', String(blockCenterX));
-    weightArrow.setAttribute('y1', String(centerYPx));
-    weightArrow.setAttribute('x2', String(blockCenterX));
-    weightArrow.setAttribute('y2', String(centerYPx + weight * arrowScale));
+    const weightKg = toKg(weight);
+    const apparentKg = apparentWeightKg(weight, buoyant);
+    const displacedLiters = toLiters(displacedVolume);
+    const displacedKg = toKg(buoyant);
 
-    buoyantArrow.setAttribute('x1', String(blockCenterX + 20));
+    scaleReadingText.textContent = `${formatNumber(apparentKg, 1)} kg`;
+
+    const bowlMaxLiters = toLiters(MAX_BLOCK_VOLUME);
+    const bowlFraction = bowlMaxLiters > 0 ? Math.min(1, displacedLiters / bowlMaxLiters) : 0;
+    const bowlHeightPx = (bowlBottom - bowlTop) * bowlFraction;
+    bowlFill.setAttribute('y', String(bowlBottom - bowlHeightPx));
+    bowlFill.setAttribute('height', String(bowlHeightPx));
+    bowlReadingText.textContent = `${formatNumber(displacedLiters, 2)} L = ${formatNumber(displacedKg, 2)} kg`;
+
+    const maxArrowLen = 50;
+    const arrowScale = maxArrowLen / (MAX_BLOCK_MASS * GRAVITY);
+    buoyantArrow.setAttribute('x1', String(tankCenterX + 18));
     buoyantArrow.setAttribute('y1', String(centerYPx));
-    buoyantArrow.setAttribute('x2', String(blockCenterX + 20));
+    buoyantArrow.setAttribute('x2', String(tankCenterX + 18));
     buoyantArrow.setAttribute('y2', String(centerYPx - buoyant * arrowScale));
 
-    weightRow.valueEl.textContent = `${formatNumber(weight)} N`;
-    buoyantRow.valueEl.textContent = `${formatNumber(buoyant)} N`;
-    displacedRow.valueEl.textContent = `${formatNumber(displacedVolume, 4)} m\u00b3`;
+    weightRow.valueEl.textContent = `${formatNumber(weightKg)} kg`;
+    apparentWeightRow.valueEl.textContent = `${formatNumber(apparentKg)} kg`;
+    displacedRow.valueEl.textContent = `${formatNumber(displacedLiters, 2)} L = ${formatNumber(displacedKg, 2)} kg`;
 
     const outcomeKey = (outcomeOverride ?? output.outcome) as 'floats' | 'sinks' | 'hangs' | null;
     outcomeLine.textContent =

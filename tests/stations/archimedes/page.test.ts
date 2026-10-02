@@ -189,13 +189,14 @@ describe('archimedes station page — Locked relationship wiring', () => {
     // The invariant: never checked-but-broken. Either the box ends up
     // unchecked, or — the chosen fix direction — it auto-switches to a
     // still-solvable candidate and stays checked with Hangs intact.
+    // ADR-0007: the quantity readouts are now [weight kg, apparent
+    // weight kg, displaced liquid "L = kg"] — apparent weight reads ~0
+    // when F_b = F_g (Hangs), since the scale clamps weight - buoyancy at zero.
     if (checkbox.checked) {
       expect(select.value).not.toBe('blockMass');
-      const weightText = mount.querySelectorAll('.archimedes-quantity-value')[0].textContent!;
-      const buoyantText = mount.querySelectorAll('.archimedes-quantity-value')[1].textContent!;
-      const weight = Number.parseFloat(weightText);
-      const buoyant = Number.parseFloat(buoyantText);
-      expect(buoyant).toBeCloseTo(weight, 1);
+      const apparentWeightText = mount.querySelectorAll('.archimedes-quantity-value')[1].textContent!;
+      const apparentWeight = Number.parseFloat(apparentWeightText);
+      expect(apparentWeight).toBeCloseTo(0, 1);
     }
 
     // Not frozen: a subsequent slider change on a still-enabled control
@@ -230,13 +231,12 @@ describe('archimedes station page — Locked relationship wiring', () => {
     window.dispatchEvent(new MouseEvent('pointerup', { clientX: 0, clientY: -800 }));
 
     // Still checked — the clamp absorbed the drag instead of breaking
-    // Hangs or getting stuck.
+    // Hangs or getting stuck. ADR-0007: apparent weight ([1]) reads ~0
+    // when Hangs holds (F_b = F_g).
     expect(checkbox.checked).toBe(true);
-    const weightText = mount.querySelectorAll('.archimedes-quantity-value')[0].textContent!;
-    const buoyantText = mount.querySelectorAll('.archimedes-quantity-value')[1].textContent!;
-    const weight = Number.parseFloat(weightText);
-    const buoyant = Number.parseFloat(buoyantText);
-    expect(buoyant).toBeCloseTo(weight, 1);
+    const apparentWeightText = mount.querySelectorAll('.archimedes-quantity-value')[1].textContent!;
+    const apparentWeight = Number.parseFloat(apparentWeightText);
+    expect(apparentWeight).toBeCloseTo(0, 1);
 
     // Not frozen: a further change of an enabled control still moves it.
     const sliderInputs = mount.querySelectorAll('.archimedes-slider-input') as NodeListOf<HTMLInputElement>;
