@@ -9,12 +9,12 @@ import { strings } from '../src/shared/strings';
  */
 
 describe('home page', () => {
-  it('lists exactly the three stations Impulse, Torque, Archimedes', () => {
+  it('lists exactly the four stations Impulse, Torque, Archimedes, Boat', () => {
     const stations = getHomeStations();
-    expect(stations.map((s) => s.label)).toEqual(['Impulse', 'Torque', 'Archimedes']);
+    expect(stations.map((s) => s.label)).toEqual(['Impulse', 'Torque', 'Archimedes', 'Boat']);
   });
 
-  it('renders the Physics title and three station rows into the mount', () => {
+  it('renders the Physics title and four station rows into the mount', () => {
     const mount = document.createElement('div');
     renderHome(mount);
 
@@ -22,7 +22,7 @@ describe('home page', () => {
     expect(heading?.textContent).toBe(strings.home.title);
 
     const rows = mount.querySelectorAll('.home-station-row');
-    expect(rows).toHaveLength(3);
-    expect(Array.from(rows).map((r) => r.textContent)).toEqual(['Impulse', 'Torque', 'Archimedes']);
+    expect(rows).toHaveLength(4);
+    expect(Array.from(rows).map((r) => r.textContent)).toEqual(['Impulse', 'Torque', 'Archimedes', 'Boat']);
   });
 });

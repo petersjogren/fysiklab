@@ -7,7 +7,7 @@
 import { strings } from '../shared/strings';
 
 export interface HomeStation {
-  readonly id: 'impulse' | 'torque' | 'archimedes';
+  readonly id: 'impulse' | 'torque' | 'archimedes' | 'boat';
   readonly label: string;
   readonly href: string;
 }
@@ -17,6 +17,7 @@ export function getHomeStations(): readonly HomeStation[] {
     { id: 'impulse', label: strings.home.stations.impulse, href: '#/impulse' },
     { id: 'torque', label: strings.home.stations.torque, href: '#/torque' },
     { id: 'archimedes', label: strings.home.stations.archimedes, href: '#/archimedes' },
+    { id: 'boat', label: strings.home.stations.boat, href: '#/boat' },
   ];
 }
 

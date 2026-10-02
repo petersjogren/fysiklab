@@ -1,7 +1,7 @@
 /**
- * Hash router wiring Home and the three station routes (Impulse, Torque,
- * Archimedes), each rendering its own station page over the shared shell
- * and Play/Reset state machine.
+ * Hash router wiring Home and the four station routes (Impulse, Torque,
+ * Archimedes, Boat), each rendering its own station page over the shared
+ * shell and Play/Reset state machine.
  */
 
 import './shared/lab.css';
@@ -9,8 +9,9 @@ import { renderHome } from './pages/home';
 import { renderImpulseStation } from './stations/impulse/page';
 import { renderTorqueStation } from './stations/torque/page';
 import { renderArchimedesStation } from './stations/archimedes/page';
+import { renderBoatStation } from './stations/boat/page';
 
-type RouteId = 'home' | 'impulse' | 'torque' | 'archimedes';
+type RouteId = 'home' | 'impulse' | 'torque' | 'archimedes' | 'boat';
 
 function parseRoute(hash: string): RouteId {
   switch (hash) {
@@ -20,6 +21,8 @@ function parseRoute(hash: string): RouteId {
       return 'torque';
     case '#/archimedes':
       return 'archimedes';
+    case '#/boat':
+      return 'boat';
     case '#/':
     case '':
     case '#':
@@ -49,6 +52,9 @@ function render(): void {
       break;
     case 'archimedes':
       renderArchimedesStation(mount);
+      break;
+    case 'boat':
+      renderBoatStation(mount);
       break;
   }
 }
