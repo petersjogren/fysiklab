@@ -298,6 +298,9 @@ export function renderTorqueStation(mount: HTMLElement): void {
   }
 
   handles.playButton.addEventListener('click', () => {
+    if (controller.getState() === 'playing') {
+      return;
+    }
     controller.play();
     syncInteractionEnabled();
 

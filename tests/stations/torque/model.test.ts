@@ -95,6 +95,28 @@ describe('torque station model — model()', () => {
     expect(forceB?.direction.x).toBe(0);
   });
 
+  it('a weight exactly at the pivot has zero arm and is excluded from both sums', () => {
+    // Weight A sits exactly at the pivot (spec: zero arm, contributes to
+    // neither clockwise nor counterclockwise sum — sideOf() returns 'none').
+    const setup = setupWith({
+      beamLengthM: 2,
+      pivotPositionM: 1,
+      weightA: { massKg: 1, positionM: 1 },
+      weightB: { massKg: 1, positionM: 1.5 },
+    });
+
+    const result = torqueStationModel.model(setup);
+    const momentA = result.quantities.find((q) => q.key === 'torque.weightA.moment')!.value;
+    const sumCw = result.quantities.find((q) => q.key === 'torque.sumClockwise')!.value;
+    const sumCcw = result.quantities.find((q) => q.key === 'torque.sumCounterclockwise')!.value;
+
+    expect(result.formulaGeometry.weightAArmM).toBe(0);
+    expect(momentA).toBe(0);
+    // Only weight B's moment appears in sumCw; weight A is excluded from both sums.
+    expect(sumCw).toBeCloseTo(1 * G * 0.5);
+    expect(sumCcw).toBe(0);
+  });
+
   it('never includes the beam itself as a force/quantity (beam weight ignored)', () => {
     const result = torqueStationModel.model(defaultTorqueSetup);
 
