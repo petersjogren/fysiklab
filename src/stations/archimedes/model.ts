@@ -273,3 +273,44 @@ export const preparedArchimedesSetup: ArchimedesSetup = {
   liquidDensity: 1000,
   blockVerticalPosition: 0,
 };
+
+/**
+ * The Boat station's prepared setup (ADR-0008): the same engine, a
+ * separate named constant since Boat has its own Reset target even
+ * though the starting numbers happen to coincide with Archimedes'
+ * (a 500 kg/m^3 block in 1000 kg/m^3 water, released at its natural
+ * floating draft — see the ADR-0008 derivation note above `model`).
+ */
+export const preparedBoatSetup: ArchimedesSetup = {
+  blockMass: 5,
+  blockVolume: 0.01,
+  liquidDensity: 1000,
+  blockVerticalPosition: 0,
+};
+
+/**
+ * ADR-0007 display helpers: the Archimedes station's scale/catch-bowl
+ * view reads apparent weight and displaced liquid in kilograms/liters,
+ * not the engine's native newtons/cubic-meters. These are pure unit
+ * conversions over the engine's existing weight/buoyantForce/
+ * displacedVolume quantities (themselves unchanged, since solve.ts and
+ * the Hangs/Afloat invariant are expressed in newtons) — kept here so
+ * page.ts, per the spec's "the page does not compute physics of its
+ * own," only formats numbers it is handed.
+ */
+export function toKg(forceN: number): number {
+  return forceN / GRAVITY;
+}
+
+/**
+ * Apparent weight: what a hanging scale reads, mg - F_b, clamped at
+ * zero. A real scale's string goes slack rather than reading negative
+ * once the buoyant force exceeds the weight (ADR-0007).
+ */
+export function apparentWeightKg(weightN: number, buoyantForceN: number): number {
+  return Math.max(0, toKg(weightN - buoyantForceN));
+}
+
+export function toLiters(volumeM3: number): number {
+  return volumeM3 * 1000;
+}
