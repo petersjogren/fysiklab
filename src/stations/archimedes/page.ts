@@ -14,11 +14,11 @@
  * catch bowl reports displaced liquid in liters with its kilogram
  * equivalent. model.ts/solve.ts are untouched — this is a display-layer
  * change only, using the toKg/apparentWeightKg/toLiters helpers they
- * export. The explicit weight-down/buoyancy-up force arrows the old view
- * drew are dropped in favor of the scale+bowl numbers (which carry the
- * same comparison more directly in this metaphor); a single buoyant-force
- * arrow remains on the submerged block, echoing the one "Lyftkraft" arrow
- * in the reference picture.
+ * export. The picture draws two labeled force arrows on one shared kg
+ * scale — Weight (mg, from the block's center) and Buoyancy (F_b, from
+ * the center of the submerged part) — a tint + bracket + percentage
+ * showing how much of the block is under water, a string that sags once
+ * the scale reads zero, and a graduated catch bowl fed by the spout.
  *
  * "Keep hangs" Locked relationship (ticket 06, ADR-0006): mirrors the
  * Torque station's "Keep equilibrium" wiring (src/stations/torque/page.ts)
@@ -42,7 +42,6 @@ import {
   apparentWeightKg,
   toKg,
   toLiters,
-  GRAVITY,
   MIN_BLOCK_MASS,
   MIN_BLOCK_VOLUME,
   MAX_BLOCK_MASS,
@@ -158,27 +157,91 @@ function createSliderRow(
 }
 
 // Model-space -> pixel mapping for the beaker SVG (ADR-0007: scale +
-// beaker + catch bowl, not a bare tank). Model-space still has the
-// liquid surface at y = 0, +y up, tank bottom at y = -1 (src/stations/
-// archimedes/model.ts TANK_DEPTH); the SVG has y growing downward. The
-// scale box occupies the top of the viewBox; the beaker sits below it,
-// shorter than before to make room.
-const VIEW_WIDTH = 300;
-const VIEW_HEIGHT = 270;
-const SCALE_TOP_PX = 8;
-const SCALE_BOTTOM_PX = 46;
-const SURFACE_Y_PX = 90;
-const TANK_BOTTOM_Y_PX = 240;
-const PX_PER_MODEL_M = TANK_BOTTOM_Y_PX - SURFACE_Y_PX; // tank depth (1 m) maps to this many px
-const ABOVE_SURFACE_PX_PER_M = 60; // scale for the draggable range above the surface (visible string slack)
+// beaker + catch bowl, not a bare tank). Model-space has the liquid
+// surface at y = 0, +y up, tank bottom at y = -1 (model.ts TANK_DEPTH),
+// and a 1 m^2 block footprint — so a 10 L block is only 1 cm tall in
+// model meters, far too thin to see in a 1 m tank. The page therefore
+// draws the block as a cube whose side grows with the cube root of its
+// volume, and maps the block's center position piecewise:
+//  - surface band (block crossing the surface): measured in block heights,
+//    so the drawn submerged fraction is EXACTLY the model's
+//    V_displaced / V (what the student needs to see);
+//  - below the band: linear down to "resting on the beaker floor";
+//  - above the band: linear up to "just under the scale's hook".
+// The mapping is continuous and invertible, so dragging follows the
+// finger and the drag is clamped to the beaker floor / scale hook.
+const VIEW_WIDTH = 340;
+const VIEW_HEIGHT = 384;
+const SCALE_TOP_PX = 10;
+const SCALE_BOTTOM_PX = 58;
+const HOOK_BOTTOM_PX = 70;
+const BLOCK_MIN_TOP_PX = HOOK_BOTTOM_PX + 14;
+const SURFACE_Y_PX = 182;
+const TANK_BOTTOM_Y_PX = 320;
+const BLOCK_PX_PER_CBRT_M = 205; // drawn cube side = this * cbrt(V); 20 L -> ~56 px
+const ABOVE_RANGE_M = 0.25; // model meters above "just clear of the surface" the drag can reach
 
-function modelYToPixelY(modelY: number): number {
-  return modelY >= 0 ? SURFACE_Y_PX - modelY * ABOVE_SURFACE_PX_PER_M : SURFACE_Y_PX - modelY * PX_PER_MODEL_M;
+interface BlockPixelFrame {
+  /** Model block height (m). */
+  readonly h: number;
+  /** Drawn block side (px). */
+  readonly hp: number;
+  /** Model center position resting on the floor. */
+  readonly cyFloor: number;
+  /** Model center position at the top of the drag range. */
+  readonly cyTop: number;
 }
 
-function pixelDyToModelDy(pixelDy: number, currentModelY: number): number {
-  const scale = currentModelY >= 0 ? ABOVE_SURFACE_PX_PER_M : PX_PER_MODEL_M;
-  return -pixelDy / scale;
+function blockPixelFrame(setup: ArchimedesSetup): BlockPixelFrame {
+  const geometry = computeGeometry(setup);
+  const h = geometry.blockHeight;
+  const hp = BLOCK_PX_PER_CBRT_M * Math.cbrt(Math.max(MIN_BLOCK_VOLUME, setup.blockVolume));
+  return { h, hp, cyFloor: geometry.tankBottom + h / 2, cyTop: h / 2 + ABOVE_RANGE_M };
+}
+
+function modelCenterToPixel(cy: number, f: BlockPixelFrame): number {
+  const { h, hp } = f;
+  if (cy > h / 2) {
+    const span = SURFACE_Y_PX - hp / 2 - (BLOCK_MIN_TOP_PX + hp / 2);
+    return SURFACE_Y_PX - hp / 2 - ((cy - h / 2) / ABOVE_RANGE_M) * span;
+  }
+  if (cy >= -h / 2) {
+    return SURFACE_Y_PX - (cy / h) * hp;
+  }
+  const span = TANK_BOTTOM_Y_PX - hp / 2 - (SURFACE_Y_PX + hp / 2);
+  return SURFACE_Y_PX + hp / 2 + ((-h / 2 - cy) / (-h / 2 - f.cyFloor)) * span;
+}
+
+function pixelCenterToModel(py: number, f: BlockPixelFrame): number {
+  const { h, hp } = f;
+  if (py < SURFACE_Y_PX - hp / 2) {
+    const span = SURFACE_Y_PX - hp / 2 - (BLOCK_MIN_TOP_PX + hp / 2);
+    return h / 2 + ((SURFACE_Y_PX - hp / 2 - py) / span) * ABOVE_RANGE_M;
+  }
+  if (py <= SURFACE_Y_PX + hp / 2) {
+    return ((SURFACE_Y_PX - py) / hp) * h;
+  }
+  const span = TANK_BOTTOM_Y_PX - hp / 2 - (SURFACE_Y_PX + hp / 2);
+  return -h / 2 - ((py - SURFACE_Y_PX - hp / 2) / span) * (-h / 2 - f.cyFloor);
+}
+
+function svgEl<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string | number>,
+  parent?: Element
+): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    el.setAttribute(name, String(value));
+  }
+  parent?.appendChild(el);
+  return el;
+}
+
+function setAttrs(el: Element, attrs: Record<string, string | number>): void {
+  for (const [name, value] of Object.entries(attrs)) {
+    el.setAttribute(name, String(value));
+  }
 }
 
 /** The four Locked-relationship Solved-variable candidates (ticket 06; no excluded control, unlike Torque's pivot). */
@@ -257,139 +320,326 @@ export function renderArchimedesStation(mount: HTMLElement): void {
 
   // --- Visual: scale, string, beaker with overflow spout, catch bowl ---
   // (ADR-0007: the classic lab demo, replacing the earlier tank cross-section.)
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`);
-  svg.setAttribute('class', 'archimedes-visual');
+  const vs = strings.archimedes.visual;
+  const svg = svgEl('svg', { viewBox: `0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`, class: 'archimedes-visual' });
   modelArea.appendChild(svg);
 
-  const tankLeft = 55;
-  const tankRight = 195;
+  const tankLeft = 34;
+  const tankRight = 244;
   const tankCenterX = (tankLeft + tankRight) / 2;
-  const spoutRight = 220;
-  const bowlLeft = 225;
-  const bowlRight = 270;
-  const bowlTop = TANK_BOTTOM_Y_PX - 34;
+  const rimY = SURFACE_Y_PX - 30;
+  const spoutTipX = 263;
+  const spoutTipY = SURFACE_Y_PX + 9;
+  const bowlLeft = 268;
+  const bowlRight = 336;
+  const bowlTop = 214;
   const bowlBottom = TANK_BOTTOM_Y_PX;
+  const tableY = TANK_BOTTOM_Y_PX + 3;
 
-  // Scale body: a box with "KILO" and a live kilogram readout.
-  const scaleBody = document.createElementNS(SVG_NS, 'rect');
-  scaleBody.setAttribute('x', String(tankCenterX - 34));
-  scaleBody.setAttribute('y', String(SCALE_TOP_PX));
-  scaleBody.setAttribute('width', '68');
-  scaleBody.setAttribute('height', String(SCALE_BOTTOM_PX - SCALE_TOP_PX));
-  scaleBody.setAttribute('rx', '4');
-  scaleBody.setAttribute('fill', '#ffffff');
-  scaleBody.setAttribute('stroke', '#111111');
-  scaleBody.setAttribute('stroke-width', '2');
-  svg.appendChild(scaleBody);
+  const defs = svgEl('defs', {}, svg);
+  const liquidGrad = svgEl('linearGradient', { id: 'archimedes-liquid', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+  svgEl('stop', { offset: '0%', 'stop-color': '#9cc8f0' }, liquidGrad);
+  svgEl('stop', { offset: '100%', 'stop-color': '#3f86cf' }, liquidGrad);
+  const blockGrad = svgEl('linearGradient', { id: 'archimedes-block-fill', x1: 0, y1: 0, x2: 1, y2: 0 }, defs);
+  svgEl('stop', { offset: '0%', 'stop-color': '#f7c86a' }, blockGrad);
+  svgEl('stop', { offset: '100%', 'stop-color': '#d9952c' }, blockGrad);
 
-  const scaleKiloText = document.createElementNS(SVG_NS, 'text');
-  scaleKiloText.setAttribute('x', String(tankCenterX));
-  scaleKiloText.setAttribute('y', String(SCALE_TOP_PX + 12));
-  scaleKiloText.setAttribute('text-anchor', 'middle');
-  scaleKiloText.setAttribute('font-size', '8');
-  scaleKiloText.setAttribute('fill', '#666666');
-  scaleKiloText.textContent = 'KILO';
-  svg.appendChild(scaleKiloText);
+  // Table both vessels stand on.
+  svgEl('rect', { x: 0, y: tableY, width: VIEW_WIDTH, height: VIEW_HEIGHT - tableY, fill: '#e4e1da' }, svg);
+  svgEl('line', { x1: 0, y1: tableY, x2: VIEW_WIDTH, y2: tableY, stroke: '#111111', 'stroke-width': 2 }, svg);
 
-  const scaleReadingText = document.createElementNS(SVG_NS, 'text');
-  scaleReadingText.setAttribute('class', 'archimedes-scale-reading');
-  scaleReadingText.setAttribute('x', String(tankCenterX));
-  scaleReadingText.setAttribute('y', String(SCALE_TOP_PX + 30));
-  scaleReadingText.setAttribute('text-anchor', 'middle');
-  scaleReadingText.setAttribute('font-size', '14');
-  scaleReadingText.setAttribute('fill', '#111111');
-  svg.appendChild(scaleReadingText);
-
-  // String from the scale down to the block (goes visually slack at the
-  // ADR-0007 zero clamp — drawn to the block regardless, since the block
-  // keeps moving even once the scale reads zero).
-  const stringLine = document.createElementNS(SVG_NS, 'line');
-  stringLine.setAttribute('x1', String(tankCenterX));
-  stringLine.setAttribute('y1', String(SCALE_BOTTOM_PX));
-  stringLine.setAttribute('x2', String(tankCenterX));
-  stringLine.setAttribute('stroke', '#111111');
-  stringLine.setAttribute('stroke-width', '1.5');
-  svg.appendChild(stringLine);
-
-  // Beaker with an overflow spout on the right (spec: force arrows red,
-  // displaced liquid blue — the catch-bowl fill below carries that blue).
-  const tankOutline = document.createElementNS(SVG_NS, 'path');
-  tankOutline.setAttribute(
-    'd',
-    `M${tankLeft},${SURFACE_Y_PX - 10} L${tankLeft},${TANK_BOTTOM_Y_PX} L${tankRight},${TANK_BOTTOM_Y_PX} L${tankRight},${SURFACE_Y_PX + 8} L${spoutRight},${SURFACE_Y_PX - 2}`
+  // Ceiling bar + scale body with an LCD window and a hook underneath.
+  svgEl('rect', { x: tankCenterX - 70, y: 0, width: 140, height: 5, fill: '#555555' }, svg);
+  svgEl('line', { x1: tankCenterX, y1: 5, x2: tankCenterX, y2: SCALE_TOP_PX, stroke: '#111111', 'stroke-width': 2 }, svg);
+  svgEl(
+    'rect',
+    {
+      x: tankCenterX - 40,
+      y: SCALE_TOP_PX,
+      width: 80,
+      height: SCALE_BOTTOM_PX - SCALE_TOP_PX,
+      rx: 8,
+      fill: '#f4f4f4',
+      stroke: '#111111',
+      'stroke-width': 2,
+    },
+    svg
   );
-  tankOutline.setAttribute('fill', 'none');
-  tankOutline.setAttribute('stroke', '#111111');
-  tankOutline.setAttribute('stroke-width', '2');
-  svg.appendChild(tankOutline);
-
-  const liquidSurface = document.createElementNS(SVG_NS, 'rect');
-  liquidSurface.setAttribute('x', String(tankLeft));
-  liquidSurface.setAttribute('y', String(SURFACE_Y_PX));
-  liquidSurface.setAttribute('width', String(tankRight - tankLeft));
-  liquidSurface.setAttribute('height', String(TANK_BOTTOM_Y_PX - SURFACE_Y_PX));
-  liquidSurface.setAttribute('fill', '#cfe3f7');
-  svg.appendChild(liquidSurface);
-
-  const block = document.createElementNS(SVG_NS, 'rect');
-  block.setAttribute('class', 'archimedes-block');
-  block.setAttribute('fill', '#ffffff');
-  block.setAttribute('fill-opacity', '0.9');
-  block.setAttribute('stroke', '#111111');
-  block.setAttribute('stroke-width', '2');
-  svg.appendChild(block);
-
-  // Catch bowl beside the beaker, filled proportionally to the displaced
-  // liquid (liters), with a "X L = Y kg" readout (ADR-0007).
-  const bowlOutline = document.createElementNS(SVG_NS, 'path');
-  bowlOutline.setAttribute(
-    'd',
-    `M${bowlLeft},${bowlTop} L${bowlLeft},${bowlBottom} L${bowlRight},${bowlBottom} L${bowlRight},${bowlTop}`
+  const scaleTitle = svgEl(
+    'text',
+    { x: tankCenterX, y: SCALE_TOP_PX + 11, 'text-anchor': 'middle', 'font-size': 8, 'font-weight': 700, fill: '#555555' },
+    svg
   );
-  bowlOutline.setAttribute('fill', 'none');
-  bowlOutline.setAttribute('stroke', '#111111');
-  bowlOutline.setAttribute('stroke-width', '2');
-  svg.appendChild(bowlOutline);
+  scaleTitle.textContent = vs.scale;
+  svgEl('rect', { x: tankCenterX - 32, y: SCALE_TOP_PX + 15, width: 64, height: 26, rx: 3, fill: '#16261c' }, svg);
+  const scaleReadingText = svgEl(
+    'text',
+    {
+      class: 'archimedes-scale-reading',
+      x: tankCenterX,
+      y: SCALE_TOP_PX + 34,
+      'text-anchor': 'middle',
+      'font-size': 16,
+      fill: '#8ff0a4',
+    },
+    svg
+  );
+  const scaleCaption = svgEl(
+    'text',
+    { class: 'archimedes-label', x: tankCenterX + 46, y: SCALE_TOP_PX + 30, 'font-size': 10, fill: '#333333' },
+    svg
+  );
+  scaleCaption.textContent = vs.scaleCaption;
+  svgEl(
+    'path',
+    {
+      d: `M${tankCenterX},${SCALE_BOTTOM_PX} L${tankCenterX},${HOOK_BOTTOM_PX - 6} a4,4 0 1 1 -4,4`,
+      fill: 'none',
+      stroke: '#111111',
+      'stroke-width': 2,
+      'stroke-linecap': 'round',
+    },
+    svg
+  );
 
-  const bowlFill = document.createElementNS(SVG_NS, 'rect');
-  bowlFill.setAttribute('class', 'archimedes-displaced blue-quantity');
-  bowlFill.setAttribute('x', String(bowlLeft));
-  bowlFill.setAttribute('width', String(bowlRight - bowlLeft));
-  bowlFill.setAttribute('fill-opacity', '0.55');
-  svg.appendChild(bowlFill);
+  // String from the hook down to the block. Drawn taut while the scale
+  // carries load; drawn as a sagging curve once the reading clamps at zero
+  // (ADR-0007: the string goes slack, it does not disappear).
+  const stringPath = svgEl('path', { fill: 'none', stroke: '#111111', 'stroke-width': 1.5 }, svg);
+  const slackLabel = svgEl(
+    'text',
+    { class: 'archimedes-label', 'text-anchor': 'end', 'font-size': 9, fill: '#555555', 'font-style': 'italic' },
+    svg
+  );
+  slackLabel.textContent = vs.slack;
 
-  const bowlReadingText = document.createElementNS(SVG_NS, 'text');
-  bowlReadingText.setAttribute('x', String((bowlLeft + bowlRight) / 2));
-  bowlReadingText.setAttribute('y', String(bowlTop - 8));
-  bowlReadingText.setAttribute('text-anchor', 'middle');
-  bowlReadingText.setAttribute('font-size', '9');
-  bowlReadingText.setAttribute('fill', '#111111');
-  svg.appendChild(bowlReadingText);
+  // Beaker: glass walls, liquid, graduation marks, overflow spout.
+  svgEl(
+    'rect',
+    { x: tankLeft, y: rimY, width: tankRight - tankLeft, height: TANK_BOTTOM_Y_PX - rimY, fill: '#f3f8fc' },
+    svg
+  );
+  svgEl(
+    'rect',
+    {
+      class: 'archimedes-liquid',
+      x: tankLeft,
+      y: SURFACE_Y_PX,
+      width: tankRight - tankLeft,
+      height: TANK_BOTTOM_Y_PX - SURFACE_Y_PX,
+      fill: 'url(#archimedes-liquid)',
+    },
+    svg
+  );
+  for (let y = TANK_BOTTOM_Y_PX - 20, i = 1; y > rimY + 4; y -= 20, i++) {
+    svgEl(
+      'line',
+      { x1: tankLeft, y1: y, x2: tankLeft + (i % 2 === 0 ? 14 : 8), y2: y, stroke: '#1d3550', 'stroke-width': 1 },
+      svg
+    );
+  }
 
-  // A single buoyant-force arrow on the submerged block (echoes the
-  // reference picture's one "Lyftkraft" arrow); weight is read off the
-  // scale instead of a second drawn arrow (ADR-0007).
-  const buoyantArrow = document.createElementNS(SVG_NS, 'line');
-  buoyantArrow.setAttribute('class', 'archimedes-buoyant-arrow force-vector');
-  buoyantArrow.setAttribute('stroke-width', '3');
-  buoyantArrow.setAttribute('marker-end', 'url(#archimedes-arrowhead-up)');
-  svg.appendChild(buoyantArrow);
+  // Block, then a translucent "liquid in front of it" tint over its
+  // submerged part, so the waterline visibly cuts across the block.
+  const block = svgEl(
+    'rect',
+    { class: 'archimedes-block', fill: 'url(#archimedes-block-fill)', stroke: '#111111', 'stroke-width': 2, rx: 1.5 },
+    svg
+  );
+  const submergedTint = svgEl('rect', { fill: '#2f78c4', 'fill-opacity': 0.38, 'pointer-events': 'none' }, svg);
+  svgEl(
+    'line',
+    {
+      x1: tankLeft,
+      y1: SURFACE_Y_PX,
+      x2: tankRight,
+      y2: SURFACE_Y_PX,
+      stroke: '#1d5fa3',
+      'stroke-width': 2,
+      'pointer-events': 'none',
+    },
+    svg
+  );
 
-  const defs = document.createElementNS(SVG_NS, 'defs');
-  const upMarker = document.createElementNS(SVG_NS, 'marker');
-  upMarker.setAttribute('id', 'archimedes-arrowhead-up');
-  upMarker.setAttribute('markerWidth', '8');
-  upMarker.setAttribute('markerHeight', '8');
-  upMarker.setAttribute('refX', '4');
-  upMarker.setAttribute('refY', '4');
-  upMarker.setAttribute('orient', 'auto-start-reverse');
-  const upPath = document.createElementNS(SVG_NS, 'path');
-  upPath.setAttribute('d', 'M0,0 L8,4 L0,8 Z');
-  upPath.setAttribute('class', 'force-vector');
-  upMarker.appendChild(upPath);
-  defs.appendChild(upMarker);
-  svg.insertBefore(defs, svg.firstChild);
+  // Beaker outline drawn over the liquid so the glass edge stays crisp.
+  svgEl(
+    'path',
+    {
+      d: `M${tankLeft - 4},${rimY} L${tankLeft},${rimY + 3} L${tankLeft},${TANK_BOTTOM_Y_PX} L${tankRight},${TANK_BOTTOM_Y_PX} L${tankRight},${rimY + 3} L${tankRight + 4},${rimY}`,
+      fill: 'none',
+      stroke: '#111111',
+      'stroke-width': 3,
+      'stroke-linejoin': 'round',
+    },
+    svg
+  );
+  const spoutD = `M${tankRight - 2},${SURFACE_Y_PX + 1} L${spoutTipX},${spoutTipY}`;
+  svgEl('path', { d: spoutD, stroke: '#111111', 'stroke-width': 9, 'stroke-linecap': 'round', fill: 'none' }, svg);
+  svgEl('path', { d: spoutD, stroke: '#9cc8f0', 'stroke-width': 5, 'stroke-linecap': 'round', fill: 'none' }, svg);
+
+  // "How much is under water" bracket + percentage, left of the block.
+  const submergedBracket = svgEl(
+    'path',
+    { class: 'archimedes-submerged-bracket', fill: 'none', stroke: '#0c2f57', 'stroke-width': 1.5 },
+    svg
+  );
+  const submergedPercentText = svgEl(
+    'text',
+    { class: 'archimedes-label archimedes-submerged-percent', 'text-anchor': 'end', 'font-size': 13, 'font-weight': 700, fill: '#0c2f57' },
+    svg
+  );
+  const submergedCaption = svgEl(
+    'text',
+    { class: 'archimedes-label', 'text-anchor': 'end', 'font-size': 9, fill: '#0c2f57' },
+    svg
+  );
+  submergedCaption.textContent = vs.underWater;
+
+  // Catch bowl: a graduated (liters) vessel fed by the spout's stream.
+  const stream = svgEl(
+    'path',
+    {
+      class: 'archimedes-stream blue-quantity',
+      fill: 'none',
+      'stroke-width': 4,
+      'stroke-linecap': 'round',
+      'stroke-opacity': 0.75,
+      display: 'none',
+    },
+    svg
+  );
+  svgEl('rect', { x: bowlLeft, y: bowlTop, width: bowlRight - bowlLeft, height: bowlBottom - bowlTop, fill: '#f3f8fc' }, svg);
+  const bowlFill = svgEl(
+    'rect',
+    { class: 'archimedes-displaced blue-quantity', x: bowlLeft, width: bowlRight - bowlLeft, 'fill-opacity': 0.6, stroke: 'none' },
+    svg
+  );
+  const bowlMaxLiters = toLiters(MAX_BLOCK_VOLUME);
+  const bowlInnerTop = bowlTop + 6;
+  const litersToBowlY = (liters: number): number =>
+    bowlBottom - (bowlBottom - bowlInnerTop) * Math.min(1, Math.max(0, liters / bowlMaxLiters));
+  for (let liters = 5; liters <= bowlMaxLiters; liters += 5) {
+    const y = litersToBowlY(liters);
+    svgEl('line', { x1: bowlRight - 8, y1: y, x2: bowlRight, y2: y, stroke: '#1d3550', 'stroke-width': 1 }, svg);
+    const tick = svgEl(
+      'text',
+      { class: 'archimedes-label', x: bowlRight - 10, y: y + 3, 'text-anchor': 'end', 'font-size': 8, fill: '#1d3550' },
+      svg
+    );
+    tick.textContent = `${liters} L`;
+  }
+  svgEl(
+    'path',
+    {
+      d: `M${bowlLeft - 3},${bowlTop} L${bowlLeft},${bowlTop + 3} L${bowlLeft},${bowlBottom} L${bowlRight},${bowlBottom} L${bowlRight},${bowlTop + 3} L${bowlRight + 3},${bowlTop}`,
+      fill: 'none',
+      stroke: '#111111',
+      'stroke-width': 3,
+      'stroke-linejoin': 'round',
+    },
+    svg
+  );
+  const bowlCenterX = (bowlLeft + bowlRight) / 2 + 6;
+  const bowlTitle = svgEl(
+    'text',
+    { class: 'archimedes-label', x: bowlCenterX, y: bowlTop - 50, 'text-anchor': 'middle', 'font-size': 9, fill: '#333333' },
+    svg
+  );
+  bowlTitle.textContent = vs.catchBowl;
+  const bowlLitersText = svgEl(
+    'text',
+    {
+      class: 'archimedes-label archimedes-bowl-liters',
+      x: bowlCenterX,
+      y: bowlTop - 34,
+      'text-anchor': 'middle',
+      'font-size': 14,
+      'font-weight': 700,
+      fill: 'var(--lab-blue)',
+    },
+    svg
+  );
+  const bowlKgText = svgEl(
+    'text',
+    { class: 'archimedes-label', x: bowlCenterX, y: bowlTop - 20, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--lab-blue)' },
+    svg
+  );
+
+  // Force arrows: weight (down, from the block's center of mass) and
+  // buoyancy (up, from the center of the submerged part), each labeled.
+  // Both red per the lab-wide force-vector convention; the labels tell
+  // them apart.
+  function createArrow(cls: string, label: string, symbol: string, sub?: string) {
+    const group = svgEl('g', { class: `${cls} force-vector`, 'pointer-events': 'none' }, svg);
+    const shaft = svgEl('line', { 'stroke-width': 3.5, 'stroke-linecap': 'round' }, group);
+    const head = svgEl('path', { stroke: 'none' }, group);
+    const text = svgEl(
+      'text',
+      { class: 'archimedes-label archimedes-force-label', 'text-anchor': 'start', 'font-size': 11,
+        'font-weight': 700,
+        stroke: '#ffffff',
+        'stroke-width': 3,
+        'paint-order': 'stroke',
+        'stroke-linejoin': 'round',
+      },
+      group
+    );
+    text.textContent = `${label} `;
+    const sym = svgEl('tspan', { 'font-style': 'italic', 'font-weight': 400 }, text);
+    sym.textContent = symbol;
+    if (sub) {
+      const subEl = svgEl('tspan', { 'font-size': 8, 'font-weight': 400, dy: 3 }, text);
+      subEl.textContent = sub;
+    }
+    return { group, shaft, head, text };
+  }
+  const weightArrow = createArrow('archimedes-weight-arrow', vs.weightArrow, 'mg');
+  const buoyantArrow = createArrow('archimedes-buoyant-arrow', vs.buoyancyArrow, 'F', 'b');
+
+  // Both arrows share one px-per-kg scale so their lengths compare
+  // directly; the scale shrinks (for both together) only when an arrow
+  // would otherwise leave the picture.
+  const ARROW_PX_PER_KG = 8;
+  const ARROW_MIN_PX = 12;
+  const HEAD_PX = 9;
+  const ARROW_LOWEST_TIP_PX = VIEW_HEIGHT - 6;
+  const ARROW_HIGHEST_TIP_PX = HOOK_BOTTOM_PX;
+  function drawArrow(
+    arrow: ReturnType<typeof createArrow>,
+    x: number,
+    y0: number,
+    kg: number,
+    dir: 1 | -1,
+    pxPerKg: number,
+    labelX: number,
+    labelY: (tip: number) => number
+  ): void {
+    if (kg < 0.01) {
+      arrow.group.setAttribute('display', 'none');
+      return;
+    }
+    arrow.group.removeAttribute('display');
+    const len = Math.max(ARROW_MIN_PX, kg * pxPerKg);
+    const tip = y0 + dir * len;
+    setAttrs(arrow.shaft, { x1: x, y1: y0, x2: x, y2: tip - dir * HEAD_PX * 0.8 });
+    arrow.head.setAttribute('d', `M${x - 6},${tip - dir * HEAD_PX} L${x + 6},${tip - dir * HEAD_PX} L${x},${tip} Z`);
+    // Label sits beside the arrowhead, outside the block (labelX is past its edge).
+    setAttrs(arrow.text, { x: labelX, y: labelY(tip) });
+  }
+
+  // Pointer hit-target stays the block itself (tests and touch users grab it).
+  let lastDisplacedLiters = Number.NaN;
+  let streamTimer: ReturnType<typeof setTimeout> | null = null;
+  function pulseStream(): void {
+    stream.removeAttribute('display');
+    if (streamTimer !== null) {
+      clearTimeout(streamTimer);
+    }
+    streamTimer = setTimeout(() => {
+      stream.setAttribute('display', 'none');
+      streamTimer = null;
+    }, 450);
+  }
 
   const outcomeLine = document.createElement('div');
   outcomeLine.className = 'archimedes-outcome';
@@ -469,24 +719,14 @@ export function renderArchimedesStation(mount: HTMLElement): void {
 
   function renderVisual(setup: ArchimedesSetup, outcomeOverride?: string): void {
     const output = archimedesStation.model(setup);
-    const geometry = computeGeometry(setup);
-    const halfHeightPx =
-      (setup.blockVerticalPosition >= 0 ? ABOVE_SURFACE_PX_PER_M : PX_PER_MODEL_M) *
-      (geometry.blockHeight / 2);
-    const centerYPx = modelYToPixelY(setup.blockVerticalPosition);
-    const blockWidthPx = 50;
-    const blockLeftPx = tankCenterX - blockWidthPx / 2;
-    const blockTopPx = centerYPx - halfHeightPx;
+    const frame = blockPixelFrame(setup);
+    const hp = frame.hp;
+    const centerYPx = modelCenterToPixel(setup.blockVerticalPosition, frame);
+    const blockLeftPx = tankCenterX - hp / 2;
+    const blockTopPx = centerYPx - hp / 2;
+    const blockBottomPx = centerYPx + hp / 2;
 
-    block.setAttribute('x', String(blockLeftPx));
-    block.setAttribute('y', String(blockTopPx));
-    block.setAttribute('width', String(blockWidthPx));
-    block.setAttribute('height', String(Math.max(2, halfHeightPx * 2)));
-
-    // String from the scale down to the top of the block — stays drawn
-    // even once the scale reading clamps at zero (ADR-0007: the string
-    // goes slack, it does not disappear).
-    stringLine.setAttribute('y2', String(blockTopPx));
+    setAttrs(block, { x: blockLeftPx, y: blockTopPx, width: hp, height: hp });
 
     const weight = output.quantities.find((q) => q.key === 'archimedes.weight')?.value ?? 0;
     const buoyant = output.quantities.find((q) => q.key === 'archimedes.buoyantForce')?.value ?? 0;
@@ -497,22 +737,81 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     const apparentKg = apparentWeightKg(weight, buoyant);
     const displacedLiters = toLiters(displacedVolume);
     const displacedKg = toKg(buoyant);
+    const blockVolume = Math.max(MIN_BLOCK_VOLUME, setup.blockVolume);
+    const submergedFraction = Math.min(1, Math.max(0, displacedVolume / blockVolume));
+
+    // Liquid tint over the submerged part of the block.
+    const tintTop = Math.max(blockTopPx, SURFACE_Y_PX);
+    const tintHeight = Math.max(0, blockBottomPx - tintTop);
+    setAttrs(submergedTint, { x: blockLeftPx, y: tintTop, width: hp, height: tintHeight });
+
+    // Under-water bracket: from the waterline (or block top) to the block bottom.
+    const bracketX = blockLeftPx - 8;
+    if (tintHeight > 0.5) {
+      submergedBracket.removeAttribute('display');
+      submergedBracket.setAttribute(
+        'd',
+        `M${bracketX + 4},${tintTop} L${bracketX},${tintTop} L${bracketX},${blockBottomPx} L${bracketX + 4},${blockBottomPx}`
+      );
+    } else {
+      submergedBracket.setAttribute('display', 'none');
+    }
+    const labelY = tintHeight > 0.5 ? Math.max(tintTop + 12, (tintTop + blockBottomPx) / 2 + 2) : SURFACE_Y_PX - 6;
+    setAttrs(submergedPercentText, { x: bracketX - 4, y: labelY });
+    setAttrs(submergedCaption, { x: bracketX - 4, y: labelY + 11 });
+    submergedPercentText.textContent = `${Math.round(submergedFraction * 100)} %`;
+
+    // String: taut line while loaded, sagging curve (+ label) once slack.
+    const hookY = HOOK_BOTTOM_PX;
+    const slack = apparentKg < 0.005;
+    if (slack) {
+      const midY = (hookY + blockTopPx) / 2;
+      stringPath.setAttribute(
+        'd',
+        `M${tankCenterX},${hookY} C${tankCenterX + 22},${midY - 10} ${tankCenterX - 22},${midY + 10} ${tankCenterX},${blockTopPx}`
+      );
+      slackLabel.removeAttribute('display');
+      setAttrs(slackLabel, { x: tankCenterX - 14, y: midY + 3 });
+    } else {
+      stringPath.setAttribute('d', `M${tankCenterX},${hookY} L${tankCenterX},${blockTopPx}`);
+      slackLabel.setAttribute('display', 'none');
+    }
 
     scaleReadingText.textContent = `${formatNumber(apparentKg, 1)} kg`;
 
-    const bowlMaxLiters = toLiters(MAX_BLOCK_VOLUME);
-    const bowlFraction = bowlMaxLiters > 0 ? Math.min(1, displacedLiters / bowlMaxLiters) : 0;
-    const bowlHeightPx = (bowlBottom - bowlTop) * bowlFraction;
-    bowlFill.setAttribute('y', String(bowlBottom - bowlHeightPx));
-    bowlFill.setAttribute('height', String(bowlHeightPx));
-    bowlReadingText.textContent = `${formatNumber(displacedLiters, 2)} L = ${formatNumber(displacedKg, 2)} kg`;
+    // Catch bowl: fill level + readouts; a short stream from the spout
+    // whenever the displaced volume increases.
+    const bowlLevelY = litersToBowlY(displacedLiters);
+    setAttrs(bowlFill, { y: bowlLevelY, height: bowlBottom - bowlLevelY });
+    bowlLitersText.textContent = `${formatNumber(displacedLiters, 2)} L`;
+    bowlKgText.textContent = `= ${formatNumber(displacedKg, 2)} kg`;
+    stream.setAttribute(
+      'd',
+      `M${spoutTipX},${spoutTipY} Q${spoutTipX + 6},${spoutTipY + 4} ${spoutTipX + 8},${Math.min(bowlLevelY, bowlBottom - 2)}`
+    );
+    if (Number.isFinite(lastDisplacedLiters) && displacedLiters > lastDisplacedLiters + 1e-6) {
+      pulseStream();
+    }
+    lastDisplacedLiters = displacedLiters;
 
-    const maxArrowLen = 50;
-    const arrowScale = maxArrowLen / (MAX_BLOCK_MASS * GRAVITY);
-    buoyantArrow.setAttribute('x1', String(tankCenterX + 18));
-    buoyantArrow.setAttribute('y1', String(centerYPx));
-    buoyantArrow.setAttribute('x2', String(tankCenterX + 18));
-    buoyantArrow.setAttribute('y2', String(centerYPx - buoyant * arrowScale));
+    // Force arrows, same kg scale for both so their lengths compare directly.
+    // Weight acts at the block's center; buoyancy at the center of its
+    // submerged part (center of buoyancy). Labels go right of the block.
+    const labelX = blockLeftPx + hp + 6;
+    const buoyancyOriginY = tintHeight > 0 ? tintTop + tintHeight / 2 : centerYPx;
+    const pxPerKg = Math.min(
+      ARROW_PX_PER_KG,
+      weightKg > 0 ? (ARROW_LOWEST_TIP_PX - centerYPx) / weightKg : Infinity,
+      displacedKg > 0 ? (buoyancyOriginY - ARROW_HIGHEST_TIP_PX) / displacedKg : Infinity
+    );
+    // Labels beside their arrowheads, but never closer than one text line
+    // to each other (tiny blocks have tiny arrows).
+    drawArrow(weightArrow, tankCenterX + 5, centerYPx, weightKg, 1, pxPerKg, labelX, (tip) =>
+      Math.max(tip, centerYPx + 14)
+    );
+    drawArrow(buoyantArrow, tankCenterX - 5, buoyancyOriginY, displacedKg, -1, pxPerKg, labelX, (tip) =>
+      Math.min(tip + 8, centerYPx - 3)
+    );
 
     weightRow.valueEl.textContent = `${formatNumber(weightKg)} kg`;
     apparentWeightRow.valueEl.textContent = `${formatNumber(apparentKg)} kg`;
@@ -668,11 +967,19 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   });
 
   // --- Drag the block vertically (spec user story 65: including above the surface) ---
+  // Drag in pixel space through the page's piecewise mapping, clamped to
+  // the beaker floor / the scale hook, then convert back to model meters.
   const draggable: Draggable = createDraggable(block as unknown as HTMLElement, {
     onDragMove: ({ dy }) => {
       const current = getSetup();
-      const modelDy = pixelDyToModelDy(dy, current.blockVerticalPosition);
-      applyDrivingChange('blockVerticalPosition', current.blockVerticalPosition + modelDy);
+      const frame = blockPixelFrame(current);
+      const rect = svg.getBoundingClientRect();
+      const svgUnitsPerCssPx = rect.height > 0 ? VIEW_HEIGHT / rect.height : 1;
+      const currentPy = modelCenterToPixel(current.blockVerticalPosition, frame);
+      const minPy = BLOCK_MIN_TOP_PX + frame.hp / 2;
+      const maxPy = TANK_BOTTOM_Y_PX - frame.hp / 2;
+      const nextPy = Math.min(maxPy, Math.max(minPy, currentPy + dy * svgUnitsPerCssPx));
+      applyDrivingChange('blockVerticalPosition', pixelCenterToModel(nextPy, frame));
     },
   });
 

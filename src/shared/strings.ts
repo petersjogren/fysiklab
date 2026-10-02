@@ -106,6 +106,16 @@ export const strings = {
       hangs: 'Hangs',
     },
     outcomePrefix: 'Outcome:',
+    visual: {
+      scale: 'SCALE',
+      scaleCaption: 'apparent weight',
+      catchBowl: 'Catch bowl',
+      catchBowlCaption: 'displaced liquid',
+      underWater: 'under water',
+      weightArrow: 'Weight',
+      buoyancyArrow: 'Buoyancy',
+      slack: 'string slack',
+    },
     keepHangs: 'Keep hangs',
     keepHangsUnavailable:
       'No value can make the block hang here — move the block, or change its volume or the liquid density, first.',
