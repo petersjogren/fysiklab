@@ -90,7 +90,7 @@ export const strings = {
   archimedes: {
     title: 'Archimedes',
     ruleText: 'Buoyancy is the weight of the liquid displaced. A hanging scale reads less as the block goes under.',
-    formula: 'F_b = \\u03c1 V_displaced g',
+    formula: 'F_b = \u03c1 V_displaced g',
     chain:
       'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside — the scale reads the difference.',
     heldFixedLine: 'Held fixed: the liquid is still and the block does not change shape.',
@@ -119,7 +119,7 @@ export const strings = {
   boat: {
     title: 'Boat',
     ruleText: 'A floating hull settles until it displaces exactly its own weight of liquid.',
-    formula: 'F_b = \\u03c1 V_displaced g',
+    formula: 'F_b = \u03c1 V_displaced g',
     chain:
       'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside. A heavier load sits lower, displacing more, until the forces match — or the hull sinks.',
     heldFixedLine: "Held fixed: the liquid is still and the hull does not change shape.",
