@@ -148,6 +148,11 @@ describe('archimedesStation — mass, volume, and liquid density rejected at/bel
 
     expect(displaced?.value).toBeCloseTo(MIN_BLOCK_VOLUME);
     expect(Number.isFinite(displaced?.value)).toBe(true);
+
+    const negative = archimedesStation.model(setup({ blockVolume: -0.01, blockVerticalPosition: -10 }));
+    const negativeDisplaced = negative.quantities.find((q) => q.key === 'archimedes.displacedVolume');
+    expect(negativeDisplaced?.value).toBeCloseTo(MIN_BLOCK_VOLUME);
+    expect(Number.isFinite(negativeDisplaced?.value)).toBe(true);
   });
 
   it('clamps a negative liquid density to zero rather than producing a negative/NaN force', () => {

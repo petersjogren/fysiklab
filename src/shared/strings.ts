@@ -50,6 +50,12 @@ export const strings = {
     velocityBeforeLabel: 'Velocity before',
     velocityAfterLabel: 'Velocity after',
     forceVectorLabel: 'F',
+    outcome: {
+      'no-change': 'No change',
+      rightward: 'Moves right',
+      leftward: 'Moves left',
+    },
+    outcomePrefix: 'Outcome:',
   },
   torque: {
     title: 'Torque',

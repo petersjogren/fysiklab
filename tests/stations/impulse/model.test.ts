@@ -22,6 +22,7 @@ describe('impulseModel', () => {
     expect(byKey['impulse.deltaV']).toBeCloseTo(5);
     expect(byKey['impulse.velocityBefore']).toBe(0);
     expect(byKey['impulse.velocityAfter']).toBeCloseTo(5);
+    expect(output.outcome).toBe('rightward');
   });
 
   it('a force of zero yields I = 0 and no speed change', () => {
@@ -34,6 +35,7 @@ describe('impulseModel', () => {
     expect(byKey['impulse.deltaP']).toBe(0);
     expect(byKey['impulse.deltaV']).toBe(0);
     expect(byKey['impulse.velocityAfter']).toBe(0);
+    expect(output.outcome).toBe('no-change');
   });
 
   it('a zero duration also yields I = 0 regardless of force', () => {
@@ -44,6 +46,7 @@ describe('impulseModel', () => {
     const byKey = Object.fromEntries(output.quantities.map((q) => [q.key, q.value]));
     expect(byKey['impulse.impulse']).toBe(0);
     expect(byKey['impulse.deltaV']).toBe(0);
+    expect(output.outcome).toBe('no-change');
   });
 
   it('a negative force gives a negative (leftward) deltaV', () => {
@@ -54,6 +57,7 @@ describe('impulseModel', () => {
     const byKey = Object.fromEntries(output.quantities.map((q) => [q.key, q.value]));
     expect(byKey['impulse.impulse']).toBeCloseTo(-8);
     expect(byKey['impulse.deltaV']).toBeCloseTo(-4);
+    expect(output.outcome).toBe('leftward');
   });
 
   it('a positive force produces a force vector pointing right (positive x)', () => {
@@ -94,6 +98,7 @@ describe('playImpulse', () => {
 
     expect(result.velocityBefore).toBe(0);
     expect(result.velocityAfter).toBeCloseTo(5);
+    expect(result.outcome).toBe('rightward');
   });
 
   it('zero force leaves the speed unchanged after Play', () => {
@@ -103,6 +108,25 @@ describe('playImpulse', () => {
 
     expect(result.velocityBefore).toBe(0);
     expect(result.velocityAfter).toBe(0);
+    expect(result.outcome).toBe('no-change');
+  });
+
+  it('a negative force gives a leftward outcome after Play', () => {
+    const setup: ImpulseSetup = { force: -4, mass: 2, duration: 2 };
+
+    const result = playImpulse(setup);
+
+    expect(result.velocityAfter).toBeCloseTo(-4);
+    expect(result.outcome).toBe('leftward');
+  });
+
+  it('a zero duration yields a no-change outcome after Play regardless of force', () => {
+    const setup: ImpulseSetup = { force: 25, mass: 1, duration: 0 };
+
+    const result = playImpulse(setup);
+
+    expect(result.velocityAfter).toBe(0);
+    expect(result.outcome).toBe('no-change');
   });
 
   it('is a pure function of the given setup: repeated Play from the same setup never stacks', () => {

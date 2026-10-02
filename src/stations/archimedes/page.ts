@@ -63,6 +63,8 @@ const DENSITY_MIN = 100;
 const DENSITY_MAX = 5000;
 const DENSITY_STEP = 10;
 
+const ANIMATION_MS = 1200;
+
 function formatNumber(value: number, digits = 2): string {
   return Number.isFinite(value) ? value.toFixed(digits) : '—';
 }
@@ -279,6 +281,15 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     preparedSetup: preparedArchimedesSetup,
   });
 
+  let animationFrameId: number | null = null;
+
+  function stopAnimation(): void {
+    if (animationFrameId !== null) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+  }
+
   function renderVisual(setup: ArchimedesSetup, outcomeOverride?: string): void {
     const output = archimedesStation.model(setup);
     const geometry = computeGeometry(setup);
@@ -338,6 +349,8 @@ export function renderArchimedesStation(mount: HTMLElement): void {
   }
 
   function syncButtons(): void {
+    const state = controller.getState();
+    handles.playButton.disabled = state === 'playing';
     handles.resetButton.disabled = false;
   }
 
@@ -409,8 +422,41 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     },
   });
 
+  function runPlayAnimation(setup: ArchimedesSetup): void {
+    stopAnimation();
+    const playResult = archimedesStation.play(setup);
+    const startPosition = setup.blockVerticalPosition;
+    const endPosition = playResult.finalBlockVerticalPosition;
+    const startTime = performance.now();
+
+    function step(now: number): void {
+      const elapsed = now - startTime;
+      const t = Math.min(1, elapsed / ANIMATION_MS);
+      // Ease out: quick motion that settles smoothly into the final
+      // rise/sink/hang position — matches "rise, sink, or hang, and
+      // then stop" (spec user stories 31/32/75) as a single smooth
+      // motion ending at the final position, not an instant jump.
+      const eased = 1 - Math.pow(1 - t, 2);
+      const interpolatedSetup: ArchimedesSetup = {
+        ...setup,
+        blockVerticalPosition: startPosition + (endPosition - startPosition) * eased,
+      };
+      renderVisual(interpolatedSetup, playResult.outcome);
+
+      if (t < 1) {
+        animationFrameId = requestAnimationFrame(step);
+      } else {
+        animationFrameId = null;
+        controller.finish();
+        syncButtons();
+      }
+    }
+
+    animationFrameId = requestAnimationFrame(step);
+  }
+
   handles.playButton.addEventListener('click', () => {
-    if (controller.getState() !== 'idle' && controller.getState() !== 'finished') {
+    if (controller.getState() === 'playing') {
       return;
     }
     const setup = controller.getSetup();
@@ -418,18 +464,11 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     setSlidersEnabled(false);
     draggable.setEnabled(false);
     syncButtons();
-
-    const playResult = archimedesStation.play(setup);
-    const settledSetup: ArchimedesSetup = {
-      ...setup,
-      blockVerticalPosition: playResult.finalBlockVerticalPosition,
-    };
-    renderVisual(settledSetup, playResult.outcome);
-    controller.finish();
-    syncButtons();
+    runPlayAnimation(setup);
   });
 
   handles.resetButton.addEventListener('click', () => {
+    stopAnimation();
     controller.reset();
     const setup = controller.getSetup();
     syncSliderInputs(setup);
