@@ -68,6 +68,17 @@ export interface LockedRelationshipControl {
   readonly element: HTMLElement;
   isChecked(): boolean;
   getSelectedId(): string;
+  /**
+   * The first candidate (in `options.candidates` order) whose `<option>`
+   * is not currently disabled, per the most recent
+   * `updateCandidateAvailability` call — or `undefined` if none are
+   * available. This is the single source of truth for "first available
+   * candidate": both this control's own checkbox-check auto-switch and a
+   * caller's own render-time auto-switch (ticket 05 fix-up round 2) must
+   * read it from here rather than independently re-deriving availability,
+   * so there is exactly one place that can disagree with itself.
+   */
+  getFirstAvailableCandidateId(): string | undefined;
   setEnabled(enabled: boolean): void;
   /**
    * Recompute, via `isAvailable`, which candidates currently solve. Marks
@@ -129,6 +140,10 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
     select.disabled = !enabled;
   }
 
+  function getFirstAvailableCandidateId(): string | undefined {
+    return options.candidates.find((candidate) => !optionsByCandidateId.get(candidate.id)?.disabled)?.id;
+  }
+
   function handleCheckboxChange(): void {
     if (checkbox.disabled) {
       // Belt-and-braces: a real browser never lets the user flip a
@@ -154,11 +169,9 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
         // candidate instead of refusing the check outright — this keeps
         // the invariant (never checked-but-broken) while still letting
         // the student enter Locked-relationship mode.
-        const firstAvailable = options.candidates.find(
-          (candidate) => !optionsByCandidateId.get(candidate.id)?.disabled
-        );
-        if (firstAvailable) {
-          selectedId = firstAvailable.id;
+        const firstAvailableId = getFirstAvailableCandidateId();
+        if (firstAvailableId !== undefined) {
+          selectedId = firstAvailableId;
           select.value = selectedId;
         }
       }
@@ -197,6 +210,7 @@ export function createLockedRelationshipControl(options: LockedRelationshipOptio
     getSelectedId() {
       return selectedId;
     },
+    getFirstAvailableCandidateId,
     setEnabled(next: boolean) {
       enabled = next;
       applyDisabled();

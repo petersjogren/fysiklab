@@ -336,6 +336,53 @@ describe('createLockedRelationshipControl', () => {
     });
   });
 
+  describe('getFirstAvailableCandidateId (single source of truth for "first available")', () => {
+    it('returns undefined before any availability update (all candidates assumed enabled, so actually returns the first one)', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      // No <option> has been marked disabled yet, so the first candidate
+      // in declaration order is "available".
+      expect(control.getFirstAvailableCandidateId()).toBe('a');
+    });
+
+    it('returns the first candidate whose <option> is not disabled, per the most recent updateCandidateAvailability call', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.updateCandidateAvailability((id) => id === 'b');
+
+      expect(control.getFirstAvailableCandidateId()).toBe('b');
+    });
+
+    it('returns undefined when every candidate is unavailable', () => {
+      const control = createLockedRelationshipControl({
+        checkboxLabel: 'Keep equilibrium',
+        candidates: CANDIDATES,
+        initialSelectedId: 'a',
+        onToggle: vi.fn(),
+        onSelect: vi.fn(),
+        unavailableMessage: UNAVAILABLE_MESSAGE,
+      });
+
+      control.updateCandidateAvailability(() => false);
+
+      expect(control.getFirstAvailableCandidateId()).toBeUndefined();
+    });
+  });
+
   describe('setChecked / setSelectedId (programmatic, non-firing)', () => {
     it('setChecked(false) updates state and selector visibility without calling onToggle', () => {
       const onToggle = vi.fn();

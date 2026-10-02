@@ -147,7 +147,6 @@ export function renderTorqueStation(mount: HTMLElement): void {
     }
   }
 
-
   const container = document.createElement('div');
   container.className = 'torque-station';
 
@@ -314,9 +313,9 @@ export function renderTorqueStation(mount: HTMLElement): void {
       // auto-switch to the first still-available candidate and re-snap —
       // the same thing switching the selector by hand already does via
       // onSelect.
-      const firstAvailable = SOLVED_VARIABLE_CANDIDATES.find((candidate) => solve(setup, candidate.id).ok);
-      if (firstAvailable) {
-        solvedField = firstAvailable.id;
+      const firstAvailable = lockedControl.getFirstAvailableCandidateId();
+      if (firstAvailable !== undefined) {
+        solvedField = firstAvailable as TorqueSolvedField;
         lockedControl.setSelectedId(solvedField);
         const result = solve(setup, solvedField);
         if (result.ok) {
@@ -425,8 +424,6 @@ export function renderTorqueStation(mount: HTMLElement): void {
     render();
   }
 
-
-
   // createDraggable's type targets HTMLElement, but pointer events work
   // identically on SVG elements; cast through unknown to attach it here
   // rather than widening the shared primitive's signature for one station.
@@ -509,10 +506,11 @@ export function renderTorqueStation(mount: HTMLElement): void {
         // box snaps... using the setup as it stands at the moment of
         // checking"); re-solving happens via the onSelect callback that
         // createLockedRelationshipControl also fires on check.
+        const currentSetup = controller.getSetup();
         lockedSetup = {
-          ...controller.getSetup(),
-          weightA: { ...controller.getSetup().weightA },
-          weightB: { ...controller.getSetup().weightB },
+          ...currentSetup,
+          weightA: { ...currentSetup.weightA },
+          weightB: { ...currentSetup.weightB },
         };
         handles.playButton.style.display = 'none';
         handles.resetButton.style.display = 'none';
