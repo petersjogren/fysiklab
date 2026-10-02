@@ -12,8 +12,10 @@
 import { renderStationShell } from '../../pages/station';
 import { createPlayResetController } from '../../shared/playReset';
 import { createDraggable, createSliderControl } from '../../shared/interaction';
+import { createLockedRelationshipControl } from '../../shared/lockedRelationship';
 import { strings } from '../../shared/strings';
-import { torqueStationModel, defaultTorqueSetup, type TorqueSetup, type TorqueWeight } from './model';
+import { torqueStationModel, defaultTorqueSetup, type TorqueSetup } from './model';
+import { solve, type TorqueSolvedField } from './solve';
 
 const MASS_MIN_KG = 0.1;
 const MASS_MAX_KG = 10;
@@ -51,6 +53,70 @@ function formatNumber(value: number): string {
   return value.toFixed(2);
 }
 
+/** The four Locked-relationship Solved-variable candidates (never the pivot — ADR-0006). */
+const SOLVED_VARIABLE_CANDIDATES: ReadonlyArray<{ readonly id: TorqueSolvedField; readonly label: string }> = [
+  { id: 'weightA.massKg', label: strings.torque.solvedVariable.weightAMass },
+  { id: 'weightA.positionM', label: strings.torque.solvedVariable.weightAPosition },
+  { id: 'weightB.massKg', label: strings.torque.solvedVariable.weightBMass },
+  { id: 'weightB.positionM', label: strings.torque.solvedVariable.weightBPosition },
+];
+
+/** A field that can drive the Locked-relationship solve: the pivot, or any non-solved weight field. */
+type DrivingField = 'pivotPositionM' | TorqueSolvedField;
+
+function getField(setup: TorqueSetup, field: DrivingField): number {
+  switch (field) {
+    case 'pivotPositionM':
+      return setup.pivotPositionM;
+    case 'weightA.massKg':
+      return setup.weightA.massKg;
+    case 'weightA.positionM':
+      return setup.weightA.positionM;
+    case 'weightB.massKg':
+      return setup.weightB.massKg;
+    case 'weightB.positionM':
+      return setup.weightB.positionM;
+  }
+}
+
+function withField(setup: TorqueSetup, field: DrivingField, value: number): TorqueSetup {
+  switch (field) {
+    case 'pivotPositionM':
+      return { ...setup, pivotPositionM: value };
+    case 'weightA.massKg':
+      return { ...setup, weightA: { ...setup.weightA, massKg: value } };
+    case 'weightA.positionM':
+      return { ...setup, weightA: { ...setup.weightA, positionM: value } };
+    case 'weightB.massKg':
+      return { ...setup, weightB: { ...setup.weightB, massKg: value } };
+    case 'weightB.positionM':
+      return { ...setup, weightB: { ...setup.weightB, positionM: value } };
+  }
+}
+
+/** Iterations for the boundary search below; plenty for beam-scale (meters/kg) precision. */
+const CLAMP_SEARCH_ITERATIONS = 40;
+
+/**
+ * Binary-search the boundary between a known-valid value and a known-invalid
+ * one. The physical relationships solve.ts covers are each monotonic along
+ * a single driving field, so there is exactly one boundary between the
+ * current (valid) value and a proposed (invalid) one.
+ */
+function findBoundaryValue(validValue: number, invalidValue: number, isValid: (value: number) => boolean): number {
+  let lo = validValue;
+  let hi = invalidValue;
+  for (let i = 0; i < CLAMP_SEARCH_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    if (isValid(mid)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 export function renderTorqueStation(mount: HTMLElement): void {
   const handles = renderStationShell(mount, {
     title: strings.home.stations.torque,
@@ -61,6 +127,28 @@ export function renderTorqueStation(mount: HTMLElement): void {
   });
 
   const controller = createPlayResetController<TorqueSetup>({ preparedSetup: defaultTorqueSetup });
+
+  // Locked-relationship ("Keep equilibrium") mode state. When checked, this
+  // station stops using createPlayResetController for its live setup (per
+  // ADR-0006's consequences) and instead reads/writes `lockedSetup`
+  // directly; Play/Reset are hidden for the duration (mutually exclusive
+  // with the checkbox+selector in the same column slot per ADR-0002/0003).
+  let lockedChecked = false;
+  let solvedField: TorqueSolvedField = SOLVED_VARIABLE_CANDIDATES[0].id;
+  let lockedSetup: TorqueSetup = { ...controller.getSetup() };
+
+  function getSetup(): TorqueSetup {
+    return lockedChecked ? lockedSetup : controller.getSetup();
+  }
+
+  function setSetup(next: TorqueSetup): void {
+    if (lockedChecked) {
+      lockedSetup = next;
+    } else {
+      controller.setSetup(next);
+    }
+  }
+
 
   const container = document.createElement('div');
   container.className = 'torque-station';
@@ -181,7 +269,7 @@ export function renderTorqueStation(mount: HTMLElement): void {
   handles.modelMount.appendChild(container);
 
   function render(): void {
-    const setup = controller.getSetup();
+    const setup = getSetup();
     const output = torqueStationModel.model(setup);
 
     beamLine.setAttribute('x1', String(toPx(0, setup.beamLengthM)));
@@ -235,42 +323,79 @@ export function renderTorqueStation(mount: HTMLElement): void {
     sumCwEl.textContent = `${strings.torque.sumClockwise}: ${formatNumber(sumCw)} N·m`;
     sumCcwEl.textContent = `${strings.torque.sumCounterclockwise}: ${formatNumber(sumCcw)} N·m`;
     outcomeEl.textContent = strings.torque.outcome[output.outcome as keyof typeof strings.torque.outcome];
+
+    // Mass sliders reflect the live setup's masses even when a mass is
+    // changed programmatically (e.g. the Solved variable recomputing).
+    massAInput.value = String(setup.weightA.massKg);
+    massBInput.value = String(setup.weightB.massKg);
   }
 
-  function updateWeight(which: 'weightA' | 'weightB', patch: Partial<TorqueWeight>): void {
-    const setup = controller.getSetup();
-    controller.setSetup({ ...setup, [which]: { ...setup[which], ...patch } });
+  /**
+   * Apply a value change coming from a drag or slider on `field`. Outside
+   * Locked-relationship mode this is a plain setSetup+render. While Keep
+   * equilibrium is checked and `field` is not the Solved variable itself
+   * (the Solved variable's own control is disabled, so this path is never
+   * hit for it), the proposed value is clamped to the range that keeps a
+   * valid solve available (ADR-0006: the drag stops early, equilibrium is
+   * never broken), then the Solved variable is recomputed from the
+   * resulting setup.
+   */
+  function applyDrivingChange(field: DrivingField, rawValue: number): void {
+    const setup = getSetup();
+
+    if (!lockedChecked) {
+      setSetup(withField(setup, field, rawValue));
+      render();
+      return;
+    }
+
+    const currentValue = getField(setup, field);
+    const isValidValue = (value: number) => solve(withField(setup, field, value), solvedField).ok;
+
+    const valueToApply = isValidValue(rawValue)
+      ? rawValue
+      : isValidValue(currentValue)
+        ? findBoundaryValue(currentValue, rawValue, isValidValue)
+        : currentValue;
+
+    let next = withField(setup, field, valueToApply);
+    const result = solve(next, solvedField);
+    if (result.ok) {
+      next = withField(next, solvedField, result.value);
+    }
+    setSetup(next);
     render();
   }
+
+
 
   // createDraggable's type targets HTMLElement, but pointer events work
   // identically on SVG elements; cast through unknown to attach it here
   // rather than widening the shared primitive's signature for one station.
   const draggableA = createDraggable(weightAHandle as unknown as HTMLElement, {
     onDragMove: ({ dx }) => {
-      const setup = controller.getSetup();
+      const setup = getSetup();
       const ppm = pxPerMeter(setup.beamLengthM);
       const next = clampPosition(setup.weightA.positionM + dx / ppm, setup.beamLengthM);
-      updateWeight('weightA', { positionM: next });
+      applyDrivingChange('weightA.positionM', next);
     },
   });
 
   const draggableB = createDraggable(weightBHandle as unknown as HTMLElement, {
     onDragMove: ({ dx }) => {
-      const setup = controller.getSetup();
+      const setup = getSetup();
       const ppm = pxPerMeter(setup.beamLengthM);
       const next = clampPosition(setup.weightB.positionM + dx / ppm, setup.beamLengthM);
-      updateWeight('weightB', { positionM: next });
+      applyDrivingChange('weightB.positionM', next);
     },
   });
 
   const draggablePivot = createDraggable(pivotHandle as unknown as HTMLElement, {
     onDragMove: ({ dx }) => {
-      const setup = controller.getSetup();
+      const setup = getSetup();
       const ppm = pxPerMeter(setup.beamLengthM);
       const next = clampPosition(setup.pivotPositionM + dx / ppm, setup.beamLengthM);
-      controller.setSetup({ ...setup, pivotPositionM: next });
-      render();
+      applyDrivingChange('pivotPositionM', next);
     },
   });
 
@@ -278,17 +403,30 @@ export function renderTorqueStation(mount: HTMLElement): void {
     min: MASS_MIN_KG,
     max: MASS_MAX_KG,
     step: MASS_STEP_KG,
-    onChange: (value) => updateWeight('weightA', { massKg: value }),
+    onChange: (value) => applyDrivingChange('weightA.massKg', value),
   });
 
   const sliderB = createSliderControl(massBInput, {
     min: MASS_MIN_KG,
     max: MASS_MAX_KG,
     step: MASS_STEP_KG,
-    onChange: (value) => updateWeight('weightB', { massKg: value }),
+    onChange: (value) => applyDrivingChange('weightB.massKg', value),
   });
 
   function syncInteractionEnabled(): void {
+    if (lockedChecked) {
+      // Keep equilibrium mode: the pivot is always a free, directly-placed
+      // control (ADR-0006); every other control is free except the one
+      // currently designated as the Solved variable, which is disabled
+      // (visually and functionally) via the same setEnabled mechanism used
+      // during Play.
+      draggablePivot.setEnabled(true);
+      draggableA.setEnabled(solvedField !== 'weightA.positionM');
+      draggableB.setEnabled(solvedField !== 'weightB.positionM');
+      sliderA.setEnabled(solvedField !== 'weightA.massKg');
+      sliderB.setEnabled(solvedField !== 'weightB.massKg');
+      return;
+    }
     const enabled = controller.isInteractionEnabled();
     draggableA.setEnabled(enabled);
     draggableB.setEnabled(enabled);
@@ -296,6 +434,56 @@ export function renderTorqueStation(mount: HTMLElement): void {
     sliderA.setEnabled(enabled);
     sliderB.setEnabled(enabled);
   }
+
+  // "Keep equilibrium" Locked relationship (ticket 05, ADR-0006): the
+  // checkbox + Solved-variable selector occupies the same column slot
+  // Play/Reset normally occupy (ADR-0002/0003's fixed layout) — they are
+  // mutually exclusive content in that one slot, never shown together.
+  const lockedControl = createLockedRelationshipControl({
+    checkboxLabel: strings.torque.keepEquilibrium,
+    candidates: SOLVED_VARIABLE_CANDIDATES,
+    initialSelectedId: solvedField,
+    onToggle: (checked) => {
+      lockedChecked = checked;
+      if (checked) {
+        // Snapshot the setup as it currently stands (spec: "checking the
+        // box snaps... using the setup as it stands at the moment of
+        // checking"); re-solving happens via the onSelect callback that
+        // createLockedRelationshipControl also fires on check.
+        lockedSetup = {
+          ...controller.getSetup(),
+          weightA: { ...controller.getSetup().weightA },
+          weightB: { ...controller.getSetup().weightB },
+        };
+        handles.playButton.style.display = 'none';
+        handles.resetButton.style.display = 'none';
+      } else {
+        // Unchecking leaves the current numbers in place as ordinary free
+        // values (no setup reset) and restores Play/Reset to this slot.
+        controller.setSetup(lockedSetup);
+        handles.playButton.style.display = '';
+        handles.resetButton.style.display = '';
+      }
+      syncInteractionEnabled();
+      render();
+    },
+    onSelect: (selectedId) => {
+      // Checking the box, or switching the selector while checked, snaps
+      // the Solved variable immediately using the setup as it stands.
+      solvedField = selectedId as TorqueSolvedField;
+      const setup = getSetup();
+      const result = solve(setup, solvedField);
+      if (result.ok) {
+        setSetup(withField(setup, solvedField, result.value));
+      }
+      syncInteractionEnabled();
+      render();
+    },
+  });
+
+  // Mount the Locked-relationship control in the same controls slot as
+  // Play/Reset (ADR-0002/0003's fixed layout: no new row).
+  handles.playButton.parentElement?.appendChild(lockedControl.element);
 
   handles.playButton.addEventListener('click', () => {
     if (controller.getState() === 'playing') {
@@ -331,8 +519,6 @@ export function renderTorqueStation(mount: HTMLElement): void {
     controller.reset();
     beamGroup.style.transition = '';
     beamGroup.removeAttribute('transform');
-    massAInput.value = String(controller.getSetup().weightA.massKg);
-    massBInput.value = String(controller.getSetup().weightB.massKg);
     render();
     syncInteractionEnabled();
   });

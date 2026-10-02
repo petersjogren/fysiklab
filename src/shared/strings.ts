@@ -76,6 +76,13 @@ export const strings = {
       turnsClockwise: 'Turns clockwise: the clockwise moment is larger.',
       turnsCounterclockwise: 'Turns counterclockwise: the counterclockwise moment is larger.',
     },
+    keepEquilibrium: 'Keep equilibrium',
+    solvedVariable: {
+      weightAMass: 'Weight A mass',
+      weightAPosition: 'Weight A position',
+      weightBMass: 'Weight B mass',
+      weightBPosition: 'Weight B position',
+    },
   },
   archimedes: {
     title: 'Archimedes',
