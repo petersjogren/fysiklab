@@ -141,8 +141,9 @@ export function createDraggable(element: HTMLElement, options: DraggableOptions)
   return {
     setEnabled(next: boolean) {
       enabled = next;
-      if (!next) {
+      if (!next && dragging) {
         dragging = false;
+        options.onDragEnd?.();
       }
     },
     destroy() {
