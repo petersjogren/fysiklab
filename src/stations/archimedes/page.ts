@@ -1,25 +1,40 @@
 /**
  * Archimedes station page: DOM wiring over the pure Archimedes model
- * (src/stations/archimedes/model.ts) and the shared station shell /
- * Play-Reset state machine. This module computes no physics itself (spec
- * Implementation Decisions: "The page does not compute physics of its
- * own.") — it only reads archimedesStation.model()/.play() output and
- * renders it, and forwards drag/slider changes to the Play/Reset
- * controller.
+ * (src/stations/archimedes/model.ts) and the shared station shell. This
+ * module computes no physics itself (spec Implementation Decisions: "The
+ * page does not compute physics of its own.") — it only reads
+ * archimedesStation.model()/.play() (and, for "Keep hangs" mode,
+ * solve.ts) output and renders it.
+ *
+ * "Keep hangs" Locked relationship (ticket 06, ADR-0006): mirrors the
+ * Torque station's "Keep equilibrium" wiring (src/stations/torque/page.ts)
+ * as closely as the two stations' shapes allow — same checkbox+selector
+ * slot swap with Play/Reset, same two render()-time availability guards,
+ * same clamp-via-binary-search pattern for a driving control, same
+ * disable-the-solved-control-itself behavior. Unlike Torque (which
+ * excludes the pivot from the 4 candidates), Archimedes has no excluded
+ * control: all 4 setup fields (mass, volume, density, position) are both
+ * candidates AND possible driving fields.
  */
 
 import { renderStationShell, type StationContent } from '../../pages/station';
 import { strings } from '../../shared/strings';
 import { createPlayResetController, type PlayResetController } from '../../shared/playReset';
-import { createSliderControl, createDraggable, type SliderControl } from '../../shared/interaction';
+import { createSliderControl, createDraggable, type SliderControl, type Draggable } from '../../shared/interaction';
 import {
   archimedesStation,
   computeGeometry,
   preparedArchimedesSetup,
   MIN_BLOCK_MASS,
   MIN_BLOCK_VOLUME,
+  MAX_BLOCK_MASS,
+  MAX_BLOCK_VOLUME,
+  SLIDER_MIN_LIQUID_DENSITY,
+  SLIDER_MAX_LIQUID_DENSITY,
   type ArchimedesSetup,
 } from './model';
+import { createLockedRelationshipControl } from '../../shared/lockedRelationship';
+import { solve, type ArchimedesSolvedField } from './solve';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -53,14 +68,16 @@ function ensureArchimedesStyles(): void {
 
 // Slider ranges. Mass and volume have a minimum above zero (spec user
 // story 79); liquid density starts at 1000 kg/m^3 (water, user story 67).
+// Upper bounds come from model.ts (single source of truth shared with
+// solve.ts's "Keep hangs" bound checks — ticket 06).
 const MASS_MIN = MIN_BLOCK_MASS;
-const MASS_MAX = 20;
+const MASS_MAX = MAX_BLOCK_MASS;
 const MASS_STEP = 0.1;
 const VOLUME_MIN = MIN_BLOCK_VOLUME;
-const VOLUME_MAX = 0.02;
+const VOLUME_MAX = MAX_BLOCK_VOLUME;
 const VOLUME_STEP = 0.0005;
-const DENSITY_MIN = 100;
-const DENSITY_MAX = 5000;
+const DENSITY_MIN = SLIDER_MIN_LIQUID_DENSITY;
+const DENSITY_MAX = SLIDER_MAX_LIQUID_DENSITY;
 const DENSITY_STEP = 10;
 
 const ANIMATION_MS = 1200;
@@ -138,6 +155,64 @@ function modelYToPixelY(modelY: number): number {
 function pixelDyToModelDy(pixelDy: number, currentModelY: number): number {
   const scale = currentModelY >= 0 ? ABOVE_SURFACE_PX_PER_M : PX_PER_MODEL_M;
   return -pixelDy / scale;
+}
+
+/** The four Locked-relationship Solved-variable candidates (ticket 06; no excluded control, unlike Torque's pivot). */
+const SOLVED_VARIABLE_CANDIDATES: ReadonlyArray<{ readonly id: ArchimedesSolvedField; readonly label: string }> = [
+  { id: 'blockMass', label: strings.archimedes.solvedVariable.blockMass },
+  { id: 'blockVolume', label: strings.archimedes.solvedVariable.blockVolume },
+  { id: 'liquidDensity', label: strings.archimedes.solvedVariable.liquidDensity },
+  { id: 'blockVerticalPosition', label: strings.archimedes.solvedVariable.blockVerticalPosition },
+];
+
+function getField(setup: ArchimedesSetup, field: ArchimedesSolvedField): number {
+  switch (field) {
+    case 'blockMass':
+      return setup.blockMass;
+    case 'blockVolume':
+      return setup.blockVolume;
+    case 'liquidDensity':
+      return setup.liquidDensity;
+    case 'blockVerticalPosition':
+      return setup.blockVerticalPosition;
+  }
+}
+
+function withField(setup: ArchimedesSetup, field: ArchimedesSolvedField, value: number): ArchimedesSetup {
+  switch (field) {
+    case 'blockMass':
+      return { ...setup, blockMass: value };
+    case 'blockVolume':
+      return { ...setup, blockVolume: value };
+    case 'liquidDensity':
+      return { ...setup, liquidDensity: value };
+    case 'blockVerticalPosition':
+      return { ...setup, blockVerticalPosition: value };
+  }
+}
+
+/** Iterations for the boundary search below; plenty for this station's scale (kg/m^3/m) precision. */
+const CLAMP_SEARCH_ITERATIONS = 40;
+
+/**
+ * Binary-search the boundary between a known-valid value and a known-invalid
+ * one. The physical relationships solve.ts covers are each monotonic along
+ * a single driving field, so there is exactly one boundary between the
+ * current (valid) value and a proposed (invalid) one. (Mirrors Torque's
+ * src/stations/torque/page.ts findBoundaryValue exactly.)
+ */
+function findBoundaryValue(validValue: number, invalidValue: number, isValid: (value: number) => boolean): number {
+  let lo = validValue;
+  let hi = invalidValue;
+  for (let i = 0; i < CLAMP_SEARCH_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    if (isValid(mid)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
 }
 
 /** Renders the Archimedes station into `mount` (e.g. the #app element). */
@@ -281,6 +356,28 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     preparedSetup: preparedArchimedesSetup,
   });
 
+  // "Keep hangs" Locked-relationship ("ticket 06, ADR-0006) mode state.
+  // When checked, this station stops using createPlayResetController for
+  // its live setup (per ADR-0006's consequences) and instead reads/writes
+  // `lockedSetup` directly; Play/Reset are hidden for the duration
+  // (mutually exclusive with the checkbox+selector in the same column
+  // slot per ADR-0002/0003) — mirrors Torque's page.ts exactly.
+  let lockedChecked = false;
+  let solvedField: ArchimedesSolvedField = SOLVED_VARIABLE_CANDIDATES[0].id;
+  let lockedSetup: ArchimedesSetup = { ...controller.getSetup() };
+
+  function getSetup(): ArchimedesSetup {
+    return lockedChecked ? lockedSetup : controller.getSetup();
+  }
+
+  function setSetup(next: ArchimedesSetup): void {
+    if (lockedChecked) {
+      lockedSetup = next;
+    } else {
+      controller.setSetup(next);
+    }
+  }
+
   let animationFrameId: number | null = null;
 
   function stopAnimation(): void {
@@ -354,73 +451,162 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     handles.resetButton.disabled = false;
   }
 
-  const sliderControls: SliderControl[] = [];
+  /**
+   * Recompute and repaint from the live setup. While "Keep hangs" is
+   * checked, this first runs the same two availability guards Torque's
+   * page.ts render() runs (ticket 05 fix-up rounds 1 and 2), BEFORE
+   * painting anything from a setup that might be checked-but-broken.
+   */
+  function render(): void {
+    const setup = getSetup();
 
-  function handleSliderChange(partial: Partial<ArchimedesSetup>): void {
-    if (!controller.isInteractionEnabled()) {
+    const availability = lockedControl.updateCandidateAvailability((id) =>
+      solve(setup, id as ArchimedesSolvedField).ok
+    );
+
+    if (lockedChecked && !availability.anyAvailable) {
+      // Keep hangs was checked, but a drag/slide (of a non-Solved field)
+      // has just carried the setup into a state where NO candidate can
+      // make it hang any longer (e.g. the block dragged fully above the
+      // surface while the liquid is also at its slider floor). Staying
+      // checked here would mean "checked but broken" (ADR-0006's core
+      // invariant). Revert to the unchecked-equivalent state: plain free
+      // values, Play/Reset back, checkbox unchecked (and, since
+      // availability is still all-false, disabled again with the message
+      // shown by the recursive render() below).
+      lockedChecked = false;
+      controller.setSetup(setup);
+      lockedControl.setChecked(false);
+      handles.playButton.style.display = '';
+      handles.resetButton.style.display = '';
+      syncInteractionEnabled();
+      render();
       return;
     }
-    const next: ArchimedesSetup = { ...controller.getSetup(), ...partial };
-    controller.setSetup(next);
-    renderVisual(next);
-  }
 
-  sliderControls.push(
-    createSliderControl(massRow.input, {
-      min: MASS_MIN,
-      max: MASS_MAX,
-      step: MASS_STEP,
-      onChange: (value) => {
-        massRow.valueEl.textContent = `${formatNumber(value)} kg`;
-        handleSliderChange({ blockMass: value });
-      },
-    })
-  );
-  sliderControls.push(
-    createSliderControl(volumeRow.input, {
-      min: VOLUME_MIN,
-      max: VOLUME_MAX,
-      step: VOLUME_STEP,
-      onChange: (value) => {
-        volumeRow.valueEl.textContent = `${formatNumber(value, 4)} m\u00b3`;
-        handleSliderChange({ blockVolume: value });
-      },
-    })
-  );
-  sliderControls.push(
-    createSliderControl(densityRow.input, {
-      min: DENSITY_MIN,
-      max: DENSITY_MAX,
-      step: DENSITY_STEP,
-      onChange: (value) => {
-        densityRow.valueEl.textContent = `${formatNumber(value, 0)} kg/m\u00b3`;
-        handleSliderChange({ liquidDensity: value });
-      },
-    })
-  );
-
-  function setSlidersEnabled(enabled: boolean): void {
-    for (const control of sliderControls) {
-      control.setEnabled(enabled);
-    }
-  }
-
-  // --- Drag the block vertically (spec user story 65: including above the surface) ---
-  const draggable = createDraggable(block as unknown as HTMLElement, {
-    onDragMove: ({ dy }) => {
-      if (!controller.isInteractionEnabled()) {
+    if (lockedChecked && availability.anyAvailable && !availability.selectedAvailable) {
+      // Ticket 05 fix-up round 2 (replicated here per ticket 06): a
+      // drag/slide just made the CURRENTLY SELECTED Solved-variable
+      // candidate specifically unsolvable while OTHER candidates remain
+      // solvable. Rather than kicking the student out of Locked-
+      // relationship mode for what may be a transient drag, auto-switch
+      // to the first still-available candidate and re-snap.
+      const firstAvailable = lockedControl.getFirstAvailableCandidateId();
+      if (firstAvailable !== undefined) {
+        solvedField = firstAvailable as ArchimedesSolvedField;
+        lockedControl.setSelectedId(solvedField);
+        const result = solve(setup, solvedField);
+        if (result.ok) {
+          setSetup(withField(setup, solvedField, result.value));
+        }
+        syncInteractionEnabled();
+        render();
         return;
       }
-      const current = controller.getSetup();
-      const modelDy = pixelDyToModelDy(dy, current.blockVerticalPosition);
-      const next: ArchimedesSetup = {
-        ...current,
-        blockVerticalPosition: current.blockVerticalPosition + modelDy,
-      };
-      controller.setSetup(next);
-      renderVisual(next);
+    }
+
+    renderVisual(getSetup());
+    syncSliderInputs(getSetup());
+  }
+
+  /**
+   * Apply a value change coming from a drag or slider on `field`. Outside
+   * Locked-relationship mode this is a plain setSetup+render. While Keep
+   * hangs is checked and `field` is not the Solved variable itself (the
+   * Solved variable's own control is disabled, so this path is never hit
+   * for it), the proposed value is clamped to the range that keeps a
+   * valid solve available (ADR-0006: the drag stops early, Hangs is
+   * never broken), then the Solved variable is recomputed from the
+   * resulting setup. Mirrors Torque's page.ts applyDrivingChange exactly.
+   */
+  function applyDrivingChange(field: ArchimedesSolvedField, rawValue: number): void {
+    const setup = getSetup();
+
+    if (!lockedChecked) {
+      setSetup(withField(setup, field, rawValue));
+      render();
+      return;
+    }
+
+    const currentValue = getField(setup, field);
+    const isValidValue = (value: number) => solve(withField(setup, field, value), solvedField).ok;
+
+    const valueToApply = isValidValue(rawValue)
+      ? rawValue
+      : isValidValue(currentValue)
+        ? findBoundaryValue(currentValue, rawValue, isValidValue)
+        : currentValue;
+
+    let next = withField(setup, field, valueToApply);
+    const result = solve(next, solvedField);
+    if (result.ok) {
+      next = withField(next, solvedField, result.value);
+    }
+    setSetup(next);
+    render();
+  }
+
+  const sliderControl: {
+    mass: SliderControl | null;
+    volume: SliderControl | null;
+    density: SliderControl | null;
+  } = { mass: null, volume: null, density: null };
+
+  sliderControl.mass = createSliderControl(massRow.input, {
+    min: MASS_MIN,
+    max: MASS_MAX,
+    step: MASS_STEP,
+    onChange: (value) => {
+      massRow.valueEl.textContent = `${formatNumber(value)} kg`;
+      applyDrivingChange('blockMass', value);
     },
   });
+  sliderControl.volume = createSliderControl(volumeRow.input, {
+    min: VOLUME_MIN,
+    max: VOLUME_MAX,
+    step: VOLUME_STEP,
+    onChange: (value) => {
+      volumeRow.valueEl.textContent = `${formatNumber(value, 4)} m\u00b3`;
+      applyDrivingChange('blockVolume', value);
+    },
+  });
+  sliderControl.density = createSliderControl(densityRow.input, {
+    min: DENSITY_MIN,
+    max: DENSITY_MAX,
+    step: DENSITY_STEP,
+    onChange: (value) => {
+      densityRow.valueEl.textContent = `${formatNumber(value, 0)} kg/m\u00b3`;
+      applyDrivingChange('liquidDensity', value);
+    },
+  });
+
+  // --- Drag the block vertically (spec user story 65: including above the surface) ---
+  const draggable: Draggable = createDraggable(block as unknown as HTMLElement, {
+    onDragMove: ({ dy }) => {
+      const current = getSetup();
+      const modelDy = pixelDyToModelDy(dy, current.blockVerticalPosition);
+      applyDrivingChange('blockVerticalPosition', current.blockVerticalPosition + modelDy);
+    },
+  });
+
+  function syncInteractionEnabled(): void {
+    if (lockedChecked) {
+      // Keep hangs mode: every control is free except the one currently
+      // designated as the Solved variable, which is disabled (visually
+      // and functionally) via the same setEnabled mechanism used during
+      // Play — mirrors Torque's page.ts syncInteractionEnabled.
+      sliderControl.mass?.setEnabled(solvedField !== 'blockMass');
+      sliderControl.volume?.setEnabled(solvedField !== 'blockVolume');
+      sliderControl.density?.setEnabled(solvedField !== 'liquidDensity');
+      draggable.setEnabled(solvedField !== 'blockVerticalPosition');
+      return;
+    }
+    const enabled = controller.isInteractionEnabled();
+    sliderControl.mass?.setEnabled(enabled);
+    sliderControl.volume?.setEnabled(enabled);
+    sliderControl.density?.setEnabled(enabled);
+    draggable.setEnabled(enabled);
+  }
 
   function runPlayAnimation(setup: ArchimedesSetup): void {
     stopAnimation();
@@ -461,8 +647,7 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     }
     const setup = controller.getSetup();
     controller.play();
-    setSlidersEnabled(false);
-    draggable.setEnabled(false);
+    syncInteractionEnabled();
     syncButtons();
     runPlayAnimation(setup);
   });
@@ -473,13 +658,62 @@ export function renderArchimedesStation(mount: HTMLElement): void {
     const setup = controller.getSetup();
     syncSliderInputs(setup);
     renderVisual(setup);
-    setSlidersEnabled(true);
-    draggable.setEnabled(true);
+    syncInteractionEnabled();
     syncButtons();
   });
 
+  // "Keep hangs" Locked relationship (ticket 06, ADR-0006): the checkbox +
+  // Solved-variable selector occupies the same column slot Play/Reset
+  // normally occupy (ADR-0002/0003's fixed layout) — mutually exclusive
+  // content in that one slot, never shown together. Mirrors Torque's
+  // page.ts lockedControl wiring exactly.
+  const lockedControl = createLockedRelationshipControl({
+    checkboxLabel: strings.archimedes.keepHangs,
+    candidates: SOLVED_VARIABLE_CANDIDATES,
+    initialSelectedId: solvedField,
+    unavailableMessage: strings.archimedes.keepHangsUnavailable,
+    onToggle: (checked) => {
+      lockedChecked = checked;
+      if (checked) {
+        // Snapshot the setup as it currently stands (spec: "checking the
+        // box snaps... using the setup as it stands at the moment of
+        // checking"); re-solving happens via the onSelect callback that
+        // createLockedRelationshipControl also fires on check.
+        lockedSetup = { ...controller.getSetup() };
+        stopAnimation();
+        handles.playButton.style.display = 'none';
+        handles.resetButton.style.display = 'none';
+      } else {
+        // Unchecking leaves the current numbers in place as ordinary free
+        // values (no setup reset) and restores Play/Reset to this slot.
+        controller.setSetup(lockedSetup);
+        handles.playButton.style.display = '';
+        handles.resetButton.style.display = '';
+      }
+      syncInteractionEnabled();
+      render();
+      syncButtons();
+    },
+    onSelect: (selectedId) => {
+      // Checking the box, or switching the selector while checked, snaps
+      // the Solved variable immediately using the setup as it stands.
+      solvedField = selectedId as ArchimedesSolvedField;
+      const setup = getSetup();
+      const result = solve(setup, solvedField);
+      if (result.ok) {
+        setSetup(withField(setup, solvedField, result.value));
+      }
+      syncInteractionEnabled();
+      render();
+    },
+  });
+
+  // Mount the Locked-relationship control in the same controls slot as
+  // Play/Reset (ADR-0002/0003's fixed layout: no new row).
+  handles.playButton.parentElement?.appendChild(lockedControl.element);
+
   // Initial paint.
-  syncSliderInputs(controller.getSetup());
-  renderVisual(controller.getSetup());
+  render();
   syncButtons();
+  syncInteractionEnabled();
 }

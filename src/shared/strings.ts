@@ -105,5 +105,14 @@ export const strings = {
       hangs: 'Hangs',
     },
     outcomePrefix: 'Outcome:',
+    keepHangs: 'Keep hangs',
+    keepHangsUnavailable:
+      'No value can make the block hang here — move the block, or change its volume or the liquid density, first.',
+    solvedVariable: {
+      blockMass: 'Block mass',
+      blockVolume: 'Block volume',
+      liquidDensity: 'Liquid density',
+      blockVerticalPosition: 'Block vertical position',
+    },
   },
 } as const;

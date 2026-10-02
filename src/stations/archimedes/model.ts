@@ -46,6 +46,23 @@ export const MIN_BLOCK_VOLUME = 0.0001; // m^3
  */
 export const MIN_LIQUID_DENSITY = 0;
 
+/**
+ * Slider-range bounds (ticket 06, solve.ts): a "Keep hangs"
+ * Locked-relationship solve that lands outside what the student's own
+ * slider can reach is not actually achievable, so solve.ts bounds its
+ * computed values against these — mirrors Torque's solve.ts bounding a
+ * solved mass against MASS_MIN_KG/MASS_MAX_KG from its own model.ts.
+ * page.ts's sliders use these same constants (single source of truth) so
+ * the two never drift apart. Liquid density's slider floor (100) is
+ * higher than the physical floor MIN_LIQUID_DENSITY (0) above — that one
+ * is about keeping F_b well-defined at the limit, this one is about what
+ * the slider itself can reach.
+ */
+export const MAX_BLOCK_MASS = 20; // kg
+export const MAX_BLOCK_VOLUME = 0.02; // m^3
+export const SLIDER_MIN_LIQUID_DENSITY = 100; // kg/m^3
+export const SLIDER_MAX_LIQUID_DENSITY = 5000; // kg/m^3
+
 /** Model-space: the tank's liquid surface is always at y = 0; this is how
  * far below the surface the tank bottom sits. Deep enough that a sunk
  * block (any volume this station allows) rests fully submerged. */
@@ -109,8 +126,14 @@ export function computeGeometry(setup: ArchimedesSetup): ArchimedesGeometry {
   };
 }
 
-/** Submerged portion of the block's volume at a given center position, clamped to [0, blockVolume]. */
-function displacedVolumeAt(setup: ArchimedesSetup, centerY: number): number {
+/**
+ * Submerged portion of the block's volume at a given center position,
+ * clamped to [0, blockVolume]. Exported (ticket 06) so solve.ts's "Keep
+ * hangs" Locked-relationship solve can reuse this exact formula instead
+ * of re-deriving the submersion geometry independently — the one seam
+ * this model owns, per the spec's Testing Decisions.
+ */
+export function displacedVolumeAt(setup: ArchimedesSetup, centerY: number): number {
   const geometry = computeGeometry(setup);
   const volume = clampedBlockVolume(setup);
   const halfHeight = geometry.blockHeight / 2;
