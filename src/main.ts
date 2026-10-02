@@ -10,6 +10,8 @@ import { renderHome } from './pages/home';
 import { renderStationShell } from './pages/station';
 import { createPlayResetController } from './shared/playReset';
 import { strings } from './shared/strings';
+import { renderImpulseStation } from './stations/impulse/page';
+import { renderTorqueStation } from './stations/torque/page';
 
 type RouteId = 'home' | 'impulse' | 'torque' | 'archimedes';
 
@@ -87,10 +89,10 @@ function render(): void {
       renderHome(mount);
       break;
     case 'impulse':
-      renderPlaceholderStation(mount, strings.home.stations.impulse, strings.placeholders.impulse);
+      renderImpulseStation(mount);
       break;
     case 'torque':
-      renderPlaceholderStation(mount, strings.home.stations.torque, strings.placeholders.torque);
+      renderTorqueStation(mount);
       break;
     case 'archimedes':
       renderPlaceholderStation(mount, strings.home.stations.archimedes, strings.placeholders.archimedes);

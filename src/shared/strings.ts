@@ -25,20 +25,6 @@ export const strings = {
     resetButton: 'Reset',
   },
   placeholders: {
-    impulse: {
-      modelArea: 'Impulse model coming in ticket 02',
-      ruleText: 'Rule text coming in ticket 02',
-      formula: 'Formula coming in ticket 02',
-      chain: 'Chain coming in ticket 02',
-      heldFixedLine: 'Held-fixed line coming in ticket 02',
-    },
-    torque: {
-      modelArea: 'Torque model coming in ticket 03',
-      ruleText: 'Rule text coming in ticket 03',
-      formula: 'Formula coming in ticket 03',
-      chain: 'Chain coming in ticket 03',
-      heldFixedLine: 'Held-fixed line coming in ticket 03',
-    },
     archimedes: {
       modelArea: 'Archimedes model coming in ticket 04',
       ruleText: 'Rule text coming in ticket 04',
@@ -46,5 +32,63 @@ export const strings = {
       chain: 'Chain coming in ticket 04',
       heldFixedLine: 'Held-fixed line coming in ticket 04',
     },
+  },
+  impulse: {
+    title: 'Impulse',
+    ruleText: 'A push on the block for a while changes its speed.',
+    formula: 'I = F \u0394t = \u0394p, \u0394v = \u0394p / m',
+    chain:
+      'A harder or longer push changes the momentum more, and that change is the area of the rectangle.',
+    heldFixedLine:
+      'Held fixed: the track is level, there is no friction, and the force is constant while it acts.',
+    forceLabel: 'Force',
+    massLabel: 'Mass',
+    durationLabel: 'Duration',
+    impulseLabel: 'Impulse I',
+    deltaPLabel: '\u0394p',
+    deltaVLabel: '\u0394v',
+    velocityBeforeLabel: 'Velocity before',
+    velocityAfterLabel: 'Velocity after',
+    forceVectorLabel: 'F',
+  },
+  torque: {
+    title: 'Torque',
+    ruleText:
+      'Equilibrium means the moments both ways are equal: the turning effect clockwise matches the turning effect counterclockwise.',
+    formula: 'M = F · l',
+    chain: 'The turning effect is the weight times its distance from the pivot.',
+    heldFixedLine:
+      "The beam's own weight is ignored; we only look at turning about the pivot, and the arms are for the level beam.",
+    weightALabel: 'Weight A',
+    weightBLabel: 'Weight B',
+    massSliderLabel: 'Mass',
+    moment: 'Moment',
+    sumClockwise: 'Sum clockwise',
+    sumCounterclockwise: 'Sum counterclockwise',
+    outcome: {
+      level: 'Level: the moments match.',
+      turnsClockwise: 'Turns clockwise: the clockwise moment is larger.',
+      turnsCounterclockwise: 'Turns counterclockwise: the counterclockwise moment is larger.',
+    },
+  },
+  archimedes: {
+    title: 'Archimedes',
+    ruleText: 'Buoyancy is the weight of the liquid displaced.',
+    formula: 'F_b = \u03c1 V_displaced g',
+    chain:
+      'The deeper face feels a larger pressure, so the liquid pushes up with a force equal to the weight of the liquid pushed aside.',
+    heldFixedLine: 'Held fixed: the liquid is still and the block does not change shape.',
+    weightLabel: 'Weight',
+    buoyantForceLabel: 'Buoyant force',
+    displacedVolumeLabel: 'Displaced volume',
+    blockMassLabel: 'Block mass',
+    blockVolumeLabel: 'Block volume',
+    liquidDensityLabel: 'Liquid density',
+    outcome: {
+      floats: 'Floats',
+      sinks: 'Sinks',
+      hangs: 'Hangs',
+    },
+    outcomePrefix: 'Outcome:',
   },
 } as const;

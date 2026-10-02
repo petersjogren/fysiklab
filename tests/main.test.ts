@@ -23,7 +23,7 @@ describe('hash router (main.ts)', () => {
     expect(document.querySelector('.home-title')?.textContent).toBe('Physics');
   });
 
-  it('renders a station placeholder page on hashchange to #/impulse', async () => {
+  it('renders the real Impulse station on hashchange to #/impulse', async () => {
     await import(/* @vite-ignore */ '../src/main?t=2' as string);
     document.dispatchEvent(new Event('DOMContentLoaded'));
 
@@ -31,6 +31,7 @@ describe('hash router (main.ts)', () => {
     window.dispatchEvent(new Event('hashchange'));
 
     expect(document.querySelector('.station-title')?.textContent).toBe('Impulse');
-    expect(document.querySelector('.station-model-area')?.textContent).toContain('ticket 02');
+    expect(document.querySelector('.impulse-model-area')).not.toBeNull();
+    expect(document.querySelector('.station-model-area')?.textContent).not.toContain('ticket 02');
   });
 });
